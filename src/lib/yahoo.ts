@@ -111,7 +111,7 @@ export async function yahooQuote(ticker: string, timeoutMs = 10000) {
  * Download parallelo con concorrenza limitata.
  */
 export async function yahooDownloadMany(
-  tickers: string[],
+  tickers: readonly string[],
   period: Period = '3mo',
   interval: Interval = '1d',
   concurrency = 10
