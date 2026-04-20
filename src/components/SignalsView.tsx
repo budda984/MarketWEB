@@ -1,7 +1,17 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Flame, AlertTriangle, Pin, ArrowUpRight, Filter } from 'lucide-react';
+import {
+  Flame,
+  AlertTriangle,
+  Pin,
+  ArrowUpRight,
+  Filter,
+  Activity,
+  Target as TargetIcon,
+  TrendingDown,
+  TrendingUp,
+} from 'lucide-react';
 import type { DbSignal } from '@/types/db';
 
 type Props = {
@@ -11,21 +21,45 @@ type Props = {
 
 type StrengthFilter = 'all' | '3' | '2' | '1';
 type StatusFilter = 'all' | 'ACTIVE' | 'TP_HIT' | 'SL_HIT' | 'TIME_STOP' | 'CLOSED';
+type StrategyFilter =
+  | 'all'
+  | 'HMA50_HA'
+  | 'PATTERN_HS'
+  | 'PATTERN_IHS'
+  | 'PATTERNS_ALL';
+
+type PatternData = {
+  type?: string;
+  confidence?: number;
+  target?: number;
+  stopLoss?: number;
+  breakoutLevel?: number;
+  breakoutConfirmed?: boolean;
+  direction?: 'up' | 'down';
+};
 
 export default function SignalsView({ signals, onOpenTicker }: Props) {
   const [strength, setStrength] = useState<StrengthFilter>('all');
   const [status, setStatus] = useState<StatusFilter>('all');
+  const [strategy, setStrategy] = useState<StrategyFilter>('all');
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
     return signals.filter((s) => {
       if (strength !== 'all' && s.strength !== Number(strength)) return false;
       if (status !== 'all' && s.status !== status) return false;
+      if (strategy !== 'all') {
+        if (strategy === 'PATTERNS_ALL') {
+          if (!s.strategy.startsWith('PATTERN_')) return false;
+        } else if (s.strategy !== strategy) {
+          return false;
+        }
+      }
       if (query && !s.ticker.toLowerCase().includes(query.toLowerCase()))
         return false;
       return true;
     });
-  }, [signals, strength, status, query]);
+  }, [signals, strength, status, strategy, query]);
 
   const groups = useMemo(() => {
     return {
@@ -35,45 +69,59 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
     };
   }, [filtered]);
 
+  const patternCount = signals.filter((s) =>
+    s.strategy.startsWith('PATTERN_')
+  ).length;
+
   return (
-    <div className="p-6 space-y-6">
-      {/* Filtri */}
-      <div className="card p-4 flex flex-wrap items-center gap-3">
-        <Filter className="w-4 h-4 text-brand-muted" />
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filtra per ticker…"
-          className="input w-48"
-        />
-        <div className="flex items-center gap-1">
-          <FilterBtn
-            active={strength === 'all'}
-            onClick={() => setStrength('all')}
-            label="Tutte"
-          />
-          <FilterBtn
-            active={strength === '3'}
-            onClick={() => setStrength('3')}
-            label="🔥 Forti"
-          />
-          <FilterBtn
-            active={strength === '2'}
-            onClick={() => setStrength('2')}
-            label="⚠️ Medi"
-          />
-          <FilterBtn
-            active={strength === '1'}
-            onClick={() => setStrength('1')}
-            label="📌 Deboli"
-          />
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
+      {/* Filtri — scroll orizzontale in mobile */}
+      <div className="card p-3 sm:p-4 space-y-2 sm:space-y-3">
+        {/* Riga 1: search + forza */}
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <Filter className="w-4 h-4 text-brand-muted flex-shrink-0" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filtra per ticker…"
+              className="input w-full sm:w-48"
+            />
+          </div>
+          <ScrollRow>
+            <FilterBtn
+              active={strength === 'all'}
+              onClick={() => setStrength('all')}
+              label="Tutte"
+            />
+            <FilterBtn
+              active={strength === '3'}
+              onClick={() => setStrength('3')}
+              label="🔥 Forti"
+            />
+            <FilterBtn
+              active={strength === '2'}
+              onClick={() => setStrength('2')}
+              label="⚠️ Medi"
+            />
+            <FilterBtn
+              active={strength === '1'}
+              onClick={() => setStrength('1')}
+              label="📌 Deboli"
+            />
+          </ScrollRow>
         </div>
-        <div className="flex items-center gap-1 ml-auto">
+
+        {/* Riga 2: stati */}
+        <ScrollRow>
+          <span className="text-xs text-brand-muted mr-1 flex-shrink-0 self-center">
+            Stato:
+          </span>
           <FilterBtn
             active={status === 'all'}
             onClick={() => setStatus('all')}
-            label="Tutti stati"
+            label="Tutti"
           />
           <FilterBtn
             active={status === 'ACTIVE'}
@@ -90,14 +138,48 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
             onClick={() => setStatus('SL_HIT')}
             label="SL"
           />
-        </div>
+        </ScrollRow>
+
+        {/* Riga 3: strategy */}
+        <ScrollRow className="pt-2 border-t border-brand-border">
+          <span className="text-xs text-brand-muted mr-1 flex-shrink-0 self-center">
+            Strategia:
+          </span>
+          <FilterBtn
+            active={strategy === 'all'}
+            onClick={() => setStrategy('all')}
+            label={`Tutte (${signals.length})`}
+          />
+          <FilterBtn
+            active={strategy === 'HMA50_HA'}
+            onClick={() => setStrategy('HMA50_HA')}
+            label={`📊 HMA+HA (${signals.length - patternCount})`}
+          />
+          <FilterBtn
+            active={strategy === 'PATTERNS_ALL'}
+            onClick={() => setStrategy('PATTERNS_ALL')}
+            label={`🎯 Pattern (${patternCount})`}
+          />
+          <FilterBtn
+            active={strategy === 'PATTERN_HS'}
+            onClick={() => setStrategy('PATTERN_HS')}
+            label="📉 H&S"
+          />
+          <FilterBtn
+            active={strategy === 'PATTERN_IHS'}
+            onClick={() => setStrategy('PATTERN_IHS')}
+            label="📈 Inv. H&S"
+          />
+        </ScrollRow>
       </div>
 
       {filtered.length === 0 && (
-        <div className="card p-16 text-center">
-          <div className="text-5xl mb-3">😴</div>
-          <div className="text-brand-muted">Nessun segnale con questi filtri.</div>
-          <div className="text-sm text-brand-muted mt-1">
+        <div className="card p-10 sm:p-16 text-center">
+          <div className="text-4xl sm:text-5xl mb-3">😴</div>
+          <div className="text-brand-muted text-sm">
+            Nessun segnale con questi filtri.
+          </div>
+          <div className="text-xs sm:text-sm text-brand-muted mt-1">
             Prova a lanciare una scansione dalla sidebar.
           </div>
         </div>
@@ -105,7 +187,7 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
 
       {groups.forti.length > 0 && (
         <Section
-          title="Segnali Forti"
+          title="Forti"
           icon={<Flame className="w-4 h-4 text-brand-up" />}
           color="text-brand-up"
           items={groups.forti}
@@ -114,7 +196,7 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
       )}
       {groups.medi.length > 0 && (
         <Section
-          title="Segnali Medi"
+          title="Medi"
           icon={<AlertTriangle className="w-4 h-4 text-yellow-400" />}
           color="text-yellow-400"
           items={groups.medi}
@@ -123,13 +205,31 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
       )}
       {groups.deboli.length > 0 && (
         <Section
-          title="Segnali Deboli"
+          title="Deboli"
           icon={<Pin className="w-4 h-4 text-brand-muted" />}
           color="text-brand-muted"
           items={groups.deboli}
           onOpenTicker={onOpenTicker}
         />
       )}
+    </div>
+  );
+}
+
+/** Wrapper per righe di filtri scrollabili orizzontalmente su mobile */
+function ScrollRow({
+  children,
+  className = '',
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-1 overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0 pb-1 scrollbar-thin ${className}`}
+      style={{ scrollbarWidth: 'thin' }}
+    >
+      {children}
     </div>
   );
 }
@@ -149,7 +249,7 @@ function Section({
 }) {
   return (
     <div className="card overflow-hidden">
-      <div className="px-5 py-3 border-b border-brand-border flex items-center justify-between">
+      <div className="px-4 sm:px-5 py-2.5 sm:py-3 border-b border-brand-border flex items-center justify-between">
         <div className={`flex items-center gap-2 font-semibold text-sm ${color}`}>
           {icon}
           {title}
@@ -157,15 +257,33 @@ function Section({
         <span className="text-xs font-mono text-brand-muted">{items.length}</span>
       </div>
       <div className="divide-y divide-brand-border">
-        {items.map((s) => (
-          <SignalRow key={s.id} signal={s} onOpen={() => onOpenTicker(s.ticker)} />
-        ))}
+        {items.map((s) =>
+          s.strategy.startsWith('PATTERN_') ? (
+            <PatternRow
+              key={s.id}
+              signal={s}
+              onOpen={() => onOpenTicker(s.ticker)}
+            />
+          ) : (
+            <SignalRow
+              key={s.id}
+              signal={s}
+              onOpen={() => onOpenTicker(s.ticker)}
+            />
+          )
+        )}
       </div>
     </div>
   );
 }
 
-function SignalRow({ signal, onOpen }: { signal: DbSignal; onOpen: () => void }) {
+function SignalRow({
+  signal,
+  onOpen,
+}: {
+  signal: DbSignal;
+  onOpen: () => void;
+}) {
   const up = (signal.change_pct ?? 0) >= 0;
   const d = new Date(signal.signal_at);
   const dateLabel = d.toLocaleString('it-IT', {
@@ -174,30 +292,36 @@ function SignalRow({ signal, onOpen }: { signal: DbSignal; onOpen: () => void })
     hour: '2-digit',
     minute: '2-digit',
   });
-  const strengthEmoji = signal.strength === 3 ? '🔥' : signal.strength === 2 ? '⚠️' : '📌';
+  const strengthEmoji =
+    signal.strength === 3 ? '🔥' : signal.strength === 2 ? '⚠️' : '📌';
 
   return (
     <button
       onClick={onOpen}
-      className="w-full px-5 py-3 flex items-center gap-4 hover:bg-brand-card/50 transition text-left group"
+      className="w-full px-3 sm:px-5 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-4 hover:bg-brand-card/50 transition text-left group"
     >
-      <div className="text-2xl w-8">{strengthEmoji}</div>
+      <div className="text-xl sm:text-2xl w-6 sm:w-8 flex-shrink-0">
+        {strengthEmoji}
+      </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-bold text-base">{signal.ticker}</span>
-          <span className="tag bg-brand-panel text-brand-muted">
-            {signal.strategy}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-bold text-sm sm:text-base">{signal.ticker}</span>
+          <span className="tag bg-brand-panel text-brand-muted hidden sm:inline-flex">
+            HMA+HA
           </span>
-          {signal.status !== 'ACTIVE' && (
-            <StatusTag status={signal.status} />
-          )}
+          {signal.status !== 'ACTIVE' && <StatusTag status={signal.status} />}
         </div>
-        <div className="text-xs text-brand-muted mt-0.5">
-          {signal.details} · {dateLabel}
+        <div className="text-xs text-brand-muted mt-0.5 truncate">
+          <span className="sm:hidden">
+            {dateLabel.split(',')[0]}
+          </span>
+          <span className="hidden sm:inline">
+            {signal.details} · {dateLabel}
+          </span>
         </div>
       </div>
-      <div className="text-right">
-        <div className="font-mono font-bold">
+      <div className="text-right flex-shrink-0">
+        <div className="font-mono font-bold text-sm sm:text-base">
           {signal.price.toFixed(2)}
         </div>
         <div
@@ -210,7 +334,7 @@ function SignalRow({ signal, onOpen }: { signal: DbSignal; onOpen: () => void })
         </div>
       </div>
       {signal.pnl_percent != null && (
-        <div className="text-right w-20">
+        <div className="text-right w-16 sm:w-20 flex-shrink-0 hidden sm:block">
           <div className="text-xs text-brand-muted">P&L</div>
           <div
             className={`font-mono font-bold ${
@@ -222,7 +346,86 @@ function SignalRow({ signal, onOpen }: { signal: DbSignal; onOpen: () => void })
           </div>
         </div>
       )}
-      <ArrowUpRight className="w-4 h-4 text-brand-muted group-hover:text-brand-green transition" />
+      <ArrowUpRight className="w-4 h-4 text-brand-muted group-hover:text-brand-green transition flex-shrink-0" />
+    </button>
+  );
+}
+
+function PatternRow({
+  signal,
+  onOpen,
+}: {
+  signal: DbSignal;
+  onOpen: () => void;
+}) {
+  const data = (signal.pattern_data ?? {}) as PatternData;
+  const isHS = signal.strategy === 'PATTERN_HS';
+  const bullish = !isHS;
+
+  const d = new Date(signal.signal_at);
+  const dateLabel = d.toLocaleString('it-IT', {
+    day: '2-digit',
+    month: 'short',
+  });
+
+  const typeIcon = isHS ? '📉' : '📈';
+  const typeName = isHS ? 'Testa e Spalle' : 'Inv. Testa e Spalle';
+  const dirColor = bullish ? 'text-brand-up' : 'text-brand-down';
+  const DirIcon = bullish ? TrendingUp : TrendingDown;
+
+  return (
+    <button
+      onClick={onOpen}
+      className="w-full px-3 sm:px-5 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-4 hover:bg-brand-card/50 transition text-left group"
+    >
+      <div className="text-xl sm:text-2xl w-6 sm:w-8 flex-shrink-0">
+        {typeIcon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-bold text-sm sm:text-base">{signal.ticker}</span>
+          <span className="tag bg-brand-green/15 text-brand-green flex items-center gap-1 hidden sm:inline-flex">
+            <Activity className="w-3 h-3" />
+            {typeName}
+          </span>
+          {signal.strength === 3 && (
+            <span className="tag bg-brand-up/20 text-brand-up">🚨 Break</span>
+          )}
+          {signal.strength === 2 && (
+            <span className="tag bg-yellow-400/20 text-yellow-400">⏳ Attesa</span>
+          )}
+        </div>
+        <div className="text-xs text-brand-muted mt-0.5 flex items-center gap-2 sm:gap-3 flex-wrap">
+          <span className={`${dirColor} flex items-center gap-1`}>
+            <DirIcon className="w-3 h-3" />
+            <span className="sm:hidden">{bullish ? 'rial' : 'rib'}</span>
+            <span className="hidden sm:inline">
+              {bullish ? 'rialzista' : 'ribassista'}
+            </span>
+          </span>
+          {data.confidence != null && (
+            <span>{(data.confidence * 100).toFixed(0)}%</span>
+          )}
+          {data.breakoutLevel != null && (
+            <span className="hidden sm:inline">
+              neckline ${Number(data.breakoutLevel).toFixed(2)}
+            </span>
+          )}
+          {data.target != null && (
+            <span className="flex items-center gap-1">
+              <TargetIcon className="w-3 h-3" />${Number(data.target).toFixed(2)}
+            </span>
+          )}
+          <span className="hidden sm:inline">{dateLabel}</span>
+        </div>
+      </div>
+      <div className="text-right flex-shrink-0">
+        <div className="font-mono font-bold text-sm sm:text-base">
+          {signal.price.toFixed(2)}
+        </div>
+        <div className="text-xs text-brand-muted">last</div>
+      </div>
+      <ArrowUpRight className="w-4 h-4 text-brand-muted group-hover:text-brand-green transition flex-shrink-0" />
     </button>
   );
 }
@@ -251,10 +454,10 @@ function FilterBtn({
   return (
     <button
       onClick={onClick}
-      className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+      className={`px-2.5 py-1 rounded text-xs font-medium transition whitespace-nowrap flex-shrink-0 ${
         active
           ? 'bg-brand-green text-black'
-          : 'text-brand-muted hover:bg-brand-card'
+          : 'text-brand-muted hover:bg-brand-card bg-brand-panel/40'
       }`}
     >
       {label}

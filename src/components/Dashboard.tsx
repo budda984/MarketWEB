@@ -11,6 +11,8 @@ import {
   Zap,
   RefreshCw,
   Settings,
+  Menu,
+  X,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
@@ -47,23 +49,24 @@ export default function Dashboard({
   const [scanMsg, setScanMsg] = useState<string | null>(null);
   const [liveConnected, setLiveConnected] = useState(false);
   const [liveCount, setLiveCount] = useState(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Supabase Realtime subscription
+  // Chiudi il drawer quando cambio view (mobile)
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [view]);
+
+  // Supabase Realtime
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase
       .channel('signals-live')
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'signals',
-        },
+        { event: 'INSERT', schema: 'public', table: 'signals' },
         (payload) => {
           const newSignal = payload.new as DbSignal;
           setSignals((prev) => {
-            // Evita duplicati (potrebbe già essere caricato dalla scansione manuale)
             if (prev.some((s) => s.id === newSignal.id)) return prev;
             return [newSignal, ...prev].slice(0, 500);
           });
@@ -72,16 +75,10 @@ export default function Dashboard({
       )
       .on(
         'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'signals',
-        },
+        { event: 'UPDATE', schema: 'public', table: 'signals' },
         (payload) => {
           const upd = payload.new as DbSignal;
-          setSignals((prev) =>
-            prev.map((s) => (s.id === upd.id ? upd : s))
-          );
+          setSignals((prev) => prev.map((s) => (s.id === upd.id ? upd : s)));
         }
       )
       .subscribe((status) => {
@@ -113,11 +110,9 @@ export default function Dashboard({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Errore');
-     setScanMsg(
+      setScanMsg(
         `✓ ${data.count} segnali su ${data.scanned} ticker in ${(data.elapsedMs / 1000).toFixed(1)}s`
       );
-      // Fetch esplicito: funziona anche se Realtime è disconnesso.
-      // Realtime resta attivo per gli aggiornamenti dal cron in background.
       const r = await fetch('/api/signals?limit=200');
       const d = await r.json();
       if (d.signals) setSignals(d.signals);
@@ -142,163 +137,205 @@ export default function Dashboard({
     return { forti, medi, deboli, tot: signals.length };
   }, [signals]);
 
+  const sidebarContent = (
+    <>
+      <div className="p-4 border-b border-brand-border">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-brand-green flex items-center justify-center flex-shrink-0">
+            <TrendingUp className="w-4 h-4 text-black" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-bold text-sm">Market Monitor</div>
+            <div className="text-xs text-brand-muted">Pro · Web</div>
+          </div>
+          <LiveDot connected={liveConnected} />
+          {/* Close button su mobile */}
+          <button
+            onClick={() => setMobileMenuOpen(false)}
+            className="lg:hidden p-1 text-brand-muted hover:text-brand-text"
+            aria-label="Chiudi menu"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      <nav className="p-2 space-y-1">
+        <NavButton
+          active={view === 'signals'}
+          onClick={() => setView('signals')}
+          icon={<Activity className="w-4 h-4" />}
+          label="Segnali"
+          badge={stats.tot}
+        />
+        <NavButton
+          active={view === 'chart'}
+          onClick={() => setView('chart')}
+          icon={<LineChart className="w-4 h-4" />}
+          label="Chart"
+        />
+        <NavButton
+          active={view === 'backtest'}
+          onClick={() => setView('backtest')}
+          icon={<Zap className="w-4 h-4" />}
+          label="Backtest"
+        />
+        <NavButton
+          active={view === 'settings'}
+          onClick={() => setView('settings')}
+          icon={<Settings className="w-4 h-4" />}
+          label="Settings"
+        />
+      </nav>
+
+      <div className="px-4 py-2 text-xs font-semibold text-brand-muted uppercase tracking-wide mt-2">
+        Scan mercati
+      </div>
+      <div className="px-2 space-y-1">
+        {(Object.keys(MARKETS) as MarketKey[]).map((m) => {
+          const on = selectedMarkets.includes(m);
+          return (
+            <button
+              key={m}
+              onClick={() =>
+                setSelectedMarkets((prev) =>
+                  prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]
+                )
+              }
+              className={`w-full flex items-center justify-between px-3 py-1.5 rounded text-sm transition ${
+                on
+                  ? 'bg-brand-green/15 text-brand-green'
+                  : 'text-brand-muted hover:bg-brand-card'
+              }`}
+            >
+              <span>{m}</span>
+              <span className="text-xs font-mono">{MARKETS[m].length}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="p-3 mt-2">
+        <button
+          onClick={handleScan}
+          disabled={scanning || selectedMarkets.length === 0}
+          className="btn-primary w-full justify-center disabled:opacity-50"
+        >
+          {scanning ? (
+            <RefreshCw className="w-4 h-4 animate-spin" />
+          ) : (
+            <Scan className="w-4 h-4" />
+          )}
+          {scanning ? 'Scansione…' : 'Scansiona ora'}
+        </button>
+        {scanMsg && <p className="text-xs mt-2 text-brand-muted">{scanMsg}</p>}
+      </div>
+
+      <div className="px-4 pb-2 text-xs font-semibold text-brand-muted uppercase tracking-wide mt-2">
+        Watchlist
+      </div>
+      <div className="px-2 space-y-1 overflow-y-auto flex-1 min-h-0">
+        {watchlists.length === 0 && (
+          <p className="text-xs text-brand-muted px-3">Nessuna watchlist</p>
+        )}
+        {watchlists.map((w) => (
+          <div
+            key={w.id}
+            className="px-3 py-1.5 text-sm text-brand-muted hover:bg-brand-card rounded flex items-center justify-between"
+          >
+            <span className="truncate">{w.name}</span>
+            <span className="text-xs font-mono flex-shrink-0 ml-2">
+              {w.tickers.length}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="p-3 border-t border-brand-border">
+        <div className="text-xs text-brand-muted truncate mb-2">{userEmail}</div>
+        <button onClick={signOut} className="btn-ghost w-full justify-center">
+          <LogOut className="w-4 h-4" /> Esci
+        </button>
+      </div>
+    </>
+  );
+
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* SIDEBAR */}
-      <aside className="w-64 bg-brand-panel border-r border-brand-border flex flex-col">
-        <div className="p-4 border-b border-brand-border">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-brand-green flex items-center justify-center">
-              <TrendingUp className="w-4 h-4 text-black" />
-            </div>
-            <div className="flex-1">
-              <div className="font-bold text-sm">Market Monitor</div>
-              <div className="text-xs text-brand-muted">Pro · Web</div>
-            </div>
-            <LiveDot connected={liveConnected} />
-          </div>
-        </div>
-
-        <nav className="p-2 space-y-1">
-          <NavButton
-            active={view === 'signals'}
-            onClick={() => setView('signals')}
-            icon={<Activity className="w-4 h-4" />}
-            label="Segnali"
-            badge={stats.tot}
-          />
-          <NavButton
-            active={view === 'chart'}
-            onClick={() => setView('chart')}
-            icon={<LineChart className="w-4 h-4" />}
-            label="Chart"
-          />
-          <NavButton
-            active={view === 'backtest'}
-            onClick={() => setView('backtest')}
-            icon={<Zap className="w-4 h-4" />}
-            label="Backtest"
-          />
-          <NavButton
-            active={view === 'settings'}
-            onClick={() => setView('settings')}
-            icon={<Settings className="w-4 h-4" />}
-            label="Settings"
-          />
-        </nav>
-
-        <div className="px-4 py-2 text-xs font-semibold text-brand-muted uppercase tracking-wide mt-2">
-          Scan mercati
-        </div>
-        <div className="px-2 space-y-1">
-          {(Object.keys(MARKETS) as MarketKey[]).map((m) => {
-            const on = selectedMarkets.includes(m);
-            return (
-              <button
-                key={m}
-                onClick={() =>
-                  setSelectedMarkets((prev) =>
-                    prev.includes(m)
-                      ? prev.filter((x) => x !== m)
-                      : [...prev, m]
-                  )
-                }
-                className={`w-full flex items-center justify-between px-3 py-1.5 rounded text-sm transition ${
-                  on
-                    ? 'bg-brand-green/15 text-brand-green'
-                    : 'text-brand-muted hover:bg-brand-card'
-                }`}
-              >
-                <span>{m}</span>
-                <span className="text-xs font-mono">
-                  {MARKETS[m].length}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="p-3 mt-2">
-          <button
-            onClick={handleScan}
-            disabled={scanning || selectedMarkets.length === 0}
-            className="btn-primary w-full justify-center disabled:opacity-50"
-          >
-            {scanning ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <Scan className="w-4 h-4" />
-            )}
-            {scanning ? 'Scansione…' : 'Scansiona ora'}
-          </button>
-          {scanMsg && (
-            <p className="text-xs mt-2 text-brand-muted">{scanMsg}</p>
-          )}
-        </div>
-
-        <div className="px-4 pb-2 text-xs font-semibold text-brand-muted uppercase tracking-wide mt-2">
-          Watchlist
-        </div>
-        <div className="px-2 space-y-1 overflow-y-auto flex-1">
-          {watchlists.length === 0 && (
-            <p className="text-xs text-brand-muted px-3">Nessuna watchlist</p>
-          )}
-          {watchlists.map((w) => (
-            <div
-              key={w.id}
-              className="px-3 py-1.5 text-sm text-brand-muted hover:bg-brand-card rounded flex items-center justify-between"
-            >
-              <span className="truncate">{w.name}</span>
-              <span className="text-xs font-mono">{w.tickers.length}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="p-3 border-t border-brand-border">
-          <div className="text-xs text-brand-muted truncate mb-2">
-            {userEmail}
-          </div>
-          <button onClick={signOut} className="btn-ghost w-full justify-center">
-            <LogOut className="w-4 h-4" /> Esci
-          </button>
-        </div>
+      {/* SIDEBAR DESKTOP (sempre visibile ≥1024px) */}
+      <aside className="hidden lg:flex w-64 bg-brand-panel border-r border-brand-border flex-col">
+        {sidebarContent}
       </aside>
 
+      {/* SIDEBAR MOBILE (drawer con backdrop) */}
+      {mobileMenuOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="lg:hidden fixed inset-0 bg-black/60 z-40 backdrop-blur-sm"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-hidden="true"
+          />
+          {/* Drawer */}
+          <aside
+            className="lg:hidden fixed top-0 left-0 bottom-0 w-72 max-w-[85vw] bg-brand-panel border-r border-brand-border flex flex-col z-50 animate-slide-in-left"
+          >
+            {sidebarContent}
+          </aside>
+        </>
+      )}
+
       {/* MAIN */}
-      <main className="flex-1 overflow-hidden flex flex-col">
-        <header className="h-14 border-b border-brand-border flex items-center justify-between px-6">
-          <div className="flex items-center gap-2 text-sm">
-            {view === 'chart' && (
-              <span className="font-semibold">
-                <LineChart className="w-4 h-4 inline mr-1.5" />
-                Chart — {selectedTicker}
-              </span>
-            )}
-            {view === 'signals' && (
-              <span className="font-semibold flex items-center gap-2">
-                <Activity className="w-4 h-4" />
-                Segnali ({stats.tot})
-                {liveCount > 0 && (
-                  <span className="tag bg-brand-green/20 text-brand-green">
-                    +{liveCount} live
+      <main className="flex-1 overflow-hidden flex flex-col min-w-0">
+        <header className="h-14 border-b border-brand-border flex items-center justify-between px-3 sm:px-6 gap-2">
+          {/* Left: hamburger (mobile) + titolo view */}
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => setMobileMenuOpen(true)}
+              className="lg:hidden p-1.5 rounded hover:bg-brand-card text-brand-text flex-shrink-0"
+              aria-label="Apri menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+
+            <div className="text-sm truncate min-w-0">
+              {view === 'chart' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <LineChart className="w-4 h-4 flex-shrink-0" />
+                  <span className="hidden sm:inline">Chart —</span>
+                  <span>{selectedTicker}</span>
+                </span>
+              )}
+              {view === 'signals' && (
+                <span className="font-semibold flex items-center gap-2">
+                  <Activity className="w-4 h-4 flex-shrink-0" />
+                  <span>
+                    <span className="hidden sm:inline">Segnali </span>
+                    ({stats.tot})
                   </span>
-                )}
-              </span>
-            )}
-            {view === 'backtest' && (
-              <span className="font-semibold">
-                <Zap className="w-4 h-4 inline mr-1.5" />
-                Backtest
-              </span>
-            )}
-            {view === 'settings' && (
-              <span className="font-semibold">
-                <Settings className="w-4 h-4 inline mr-1.5" />
-                Settings
-              </span>
-            )}
+                  {liveCount > 0 && (
+                    <span className="tag bg-brand-green/20 text-brand-green text-xs whitespace-nowrap">
+                      +{liveCount} live
+                    </span>
+                  )}
+                </span>
+              )}
+              {view === 'backtest' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 flex-shrink-0" />
+                  Backtest
+                </span>
+              )}
+              {view === 'settings' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <Settings className="w-4 h-4 flex-shrink-0" />
+                  Settings
+                </span>
+              )}
+            </div>
           </div>
 
+          {/* Center (desktop): ricerca ticker */}
           {view === 'chart' && (
             <TickerSearch
               value={selectedTicker}
@@ -306,15 +343,31 @@ export default function Dashboard({
             />
           )}
 
-          <div className="flex items-center gap-3 text-xs">
+          {/* Right: stats (nascosti su mobile) */}
+          <div className="hidden md:flex items-center gap-2 text-xs flex-shrink-0">
             <Stat label="Forti" value={stats.forti} color="text-brand-up" />
             <Stat label="Medi" value={stats.medi} color="text-yellow-400" />
             <Stat label="Deboli" value={stats.deboli} color="text-brand-muted" />
           </div>
+
+          {/* Mobile: solo totale compatto */}
+          <div className="md:hidden text-xs font-mono text-brand-muted flex-shrink-0">
+            {stats.forti > 0 && (
+              <span className="text-brand-up mr-1">{stats.forti}🔥</span>
+            )}
+            {stats.medi > 0 && (
+              <span className="text-yellow-400 mr-1">{stats.medi}⚠</span>
+            )}
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto">
-          {view === 'chart' && <ChartView ticker={selectedTicker} />}
+          {view === 'chart' && (
+            <ChartView
+              ticker={selectedTicker}
+              onTickerChange={(t) => setSelectedTicker(t.toUpperCase())}
+            />
+          )}
           {view === 'signals' && (
             <SignalsView signals={signals} onOpenTicker={onOpenTicker} />
           )}
@@ -331,7 +384,7 @@ export default function Dashboard({
 function LiveDot({ connected }: { connected: boolean }) {
   return (
     <span
-      className="relative flex h-2 w-2"
+      className="relative flex h-2 w-2 flex-shrink-0"
       title={connected ? 'Live connected' : 'Offline'}
     >
       {connected && (
@@ -400,15 +453,15 @@ function TickerSearch({
         e.preventDefault();
         onChange(v);
       }}
-      className="flex items-center gap-2"
+      className="hidden sm:flex items-center gap-2"
     >
       <Search className="w-4 h-4 text-brand-muted" />
       <input
         type="text"
         value={v}
         onChange={(e) => setV(e.target.value)}
-        placeholder="AAPL, BTC-USD, ENI.MI…"
-        className="input w-56"
+        placeholder="AAPL, BTC-USD…"
+        className="input w-40 lg:w-56"
       />
       <button type="submit" className="btn-ghost">
         Apri
@@ -427,7 +480,7 @@ function Stat({
   color: string;
 }) {
   return (
-    <div className="px-2 py-1 rounded bg-brand-panel border border-brand-border">
+    <div className="px-2 py-1 rounded bg-brand-panel border border-brand-border whitespace-nowrap">
       <span className="text-brand-muted mr-1">{label}</span>
       <span className={`font-mono font-bold ${color}`}>{value}</span>
     </div>

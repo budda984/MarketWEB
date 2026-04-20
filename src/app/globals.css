@@ -14,7 +14,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbar stile dark */
+/* Scrollbar stile dark (desktop) */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -30,9 +30,32 @@ body {
   background: #3a3a3a;
 }
 
-/* Chart tooltip base */
+/* Chart tooltip */
 .recharts-tooltip-wrapper {
   outline: none !important;
+}
+
+/* Drawer mobile: animazione slide-in da sinistra */
+@keyframes slide-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-left {
+  animation: slide-in-left 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* iOS: blocca lo zoom del form quando input ha font-size < 16px */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 @layer components {

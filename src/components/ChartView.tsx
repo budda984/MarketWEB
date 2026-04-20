@@ -1,11 +1,24 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Bar } from 'recharts';
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  Bar,
+} from 'recharts';
+import { Search } from 'lucide-react';
 import { hma, heikinAshi } from '@/lib/indicators';
 import type { OHLCV } from '@/lib/yahoo';
 
-type Props = { ticker: string };
+type Props = {
+  ticker: string;
+  onTickerChange?: (t: string) => void;
+};
 
 type QuoteData = {
   quote: {
@@ -19,7 +32,7 @@ type QuoteData = {
   candles: OHLCV[];
 };
 
-export default function ChartView({ ticker }: Props) {
+export default function ChartView({ ticker, onTickerChange }: Props) {
   const [data, setData] = useState<QuoteData | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -75,150 +88,221 @@ export default function ChartView({ ticker }: Props) {
     return { candleRows, haRows };
   }, [data]);
 
-  if (loading) {
-    return (
-      <div className="p-12 text-center text-brand-muted">
-        Caricamento {ticker}…
-      </div>
-    );
-  }
-  if (err) {
-    return (
-      <div className="p-12 text-center text-brand-down">
-        Errore per {ticker}: {err}
-      </div>
-    );
-  }
-  if (!data || candleRows.length === 0) {
-    return <div className="p-12 text-center">Nessun dato</div>;
-  }
-
-  const q = data.quote;
-  const up = (q?.changePct ?? 0) >= 0;
-
   return (
-    <div className="p-6 space-y-6">
-      {/* Header prezzi */}
-      {q && (
-        <div className="card p-5 flex flex-wrap items-baseline gap-6">
-          <div>
-            <div className="text-brand-muted text-xs">{q.exchange}</div>
-            <div className="text-3xl font-bold">{q.ticker}</div>
-          </div>
-          <div className="text-4xl font-mono font-bold">
-            {q.price.toFixed(2)}
-            <span className="text-base text-brand-muted ml-2">
-              {q.currency}
-            </span>
-          </div>
-          <div
-            className={`text-lg font-mono ${
-              up ? 'text-brand-up' : 'text-brand-down'
-            }`}
-          >
-            {up ? '▲' : '▼'} {q.changePct.toFixed(2)}%
-          </div>
-          <div className="text-sm text-brand-muted ml-auto">
-            Prev close: {q.previousClose.toFixed(2)}
-          </div>
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
+      {/* Ricerca ticker visibile solo in mobile (desktop ce l'ha nell'header) */}
+      {onTickerChange && (
+        <div className="sm:hidden">
+          <MobileTickerSearch defaultValue={ticker} onChange={onTickerChange} />
         </div>
       )}
 
-      {/* Pannello 1: Candle + HMA 50 */}
-      <div className="card p-5">
-        <h3 className="text-sm font-semibold text-brand-muted mb-3 uppercase tracking-wide">
-          Candlestick + Hull MA 50
-        </h3>
-        <div className="h-96">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={candleRows}>
-              <CartesianGrid stroke="#1e222d" strokeDasharray="3 3" />
-              <XAxis
-                dataKey="date"
-                stroke="#6a6a6a"
-                tick={{ fontSize: 10 }}
-                interval="preserveStartEnd"
-              />
-              <YAxis
-                yAxisId="price"
-                stroke="#6a6a6a"
-                tick={{ fontSize: 10 }}
-                domain={['auto', 'auto']}
-                orientation="right"
-              />
-              <Tooltip
-                contentStyle={{
-                  background: '#181818',
-                  border: '1px solid #2a2a2a',
-                  borderRadius: 6,
-                  fontSize: 12,
-                }}
-                labelStyle={{ color: '#9a9a9a' }}
-              />
-              {/* Candele come barre high-low in background */}
-              <Line
-                yAxisId="price"
-                type="monotone"
-                dataKey="close"
-                stroke="#e5e5e5"
-                strokeWidth={1.5}
-                dot={false}
-                name="Close"
-              />
-              <Line
-                yAxisId="price"
-                type="monotone"
-                dataKey="hma"
-                stroke="#1DB954"
-                strokeWidth={2}
-                dot={false}
-                name="HMA 50"
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
+      {loading && (
+        <div className="p-10 text-center text-brand-muted text-sm">
+          Caricamento {ticker}…
         </div>
-      </div>
+      )}
+      {err && (
+        <div className="p-10 text-center text-brand-down text-sm">
+          Errore per {ticker}: {err}
+        </div>
+      )}
 
-      {/* Pannello 2: Heikin Ashi */}
-      <div className="card p-5">
-        <h3 className="text-sm font-semibold text-brand-muted mb-3 uppercase tracking-wide">
-          Heikin Ashi
-        </h3>
-        <div className="h-72">
-          <HeikinAshiChart rows={haRows} />
-        </div>
-      </div>
+      {!loading && !err && data && candleRows.length > 0 && (
+        <>
+          {/* Header prezzi — impilato verticalmente in mobile, orizzontale desktop */}
+          {data.quote && (
+            <div className="card p-4 sm:p-5">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-3 sm:gap-6">
+                <div className="flex items-baseline justify-between sm:block">
+                  <div>
+                    <div className="text-brand-muted text-xs">
+                      {data.quote.exchange}
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-bold">
+                      {data.quote.ticker}
+                    </div>
+                  </div>
+                  {/* Variazione affianco in mobile */}
+                  <div
+                    className={`text-lg font-mono sm:hidden ${
+                      data.quote.changePct >= 0
+                        ? 'text-brand-up'
+                        : 'text-brand-down'
+                    }`}
+                  >
+                    {data.quote.changePct >= 0 ? '▲' : '▼'}{' '}
+                    {data.quote.changePct.toFixed(2)}%
+                  </div>
+                </div>
 
-      {/* Pannello 3: Volume */}
-      <div className="card p-5">
-        <h3 className="text-sm font-semibold text-brand-muted mb-3 uppercase tracking-wide">
-          Volume
-        </h3>
-        <div className="h-40">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={candleRows}>
-              <CartesianGrid stroke="#1e222d" strokeDasharray="3 3" />
-              <XAxis dataKey="date" stroke="#6a6a6a" tick={{ fontSize: 10 }} />
-              <YAxis stroke="#6a6a6a" tick={{ fontSize: 10 }} orientation="right" />
-              <Tooltip
-                contentStyle={{
-                  background: '#181818',
-                  border: '1px solid #2a2a2a',
-                  borderRadius: 6,
-                }}
-              />
-              <Bar dataKey="volume" fill="#2a2a2a" />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+                <div className="text-3xl sm:text-4xl font-mono font-bold">
+                  {data.quote.price.toFixed(2)}
+                  <span className="text-sm sm:text-base text-brand-muted ml-2">
+                    {data.quote.currency}
+                  </span>
+                </div>
+
+                {/* Variazione desktop */}
+                <div
+                  className={`hidden sm:block text-lg font-mono ${
+                    data.quote.changePct >= 0
+                      ? 'text-brand-up'
+                      : 'text-brand-down'
+                  }`}
+                >
+                  {data.quote.changePct >= 0 ? '▲' : '▼'}{' '}
+                  {data.quote.changePct.toFixed(2)}%
+                </div>
+                <div className="text-xs sm:text-sm text-brand-muted sm:ml-auto">
+                  Prev close: {data.quote.previousClose.toFixed(2)}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Pannello 1: Candle + HMA 50 */}
+          <div className="card p-3 sm:p-5">
+            <h3 className="text-xs sm:text-sm font-semibold text-brand-muted mb-2 sm:mb-3 uppercase tracking-wide">
+              Candlestick + Hull MA 50
+            </h3>
+            <div className="h-64 sm:h-80 lg:h-96">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={candleRows}>
+                  <CartesianGrid stroke="#1e222d" strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="date"
+                    stroke="#6a6a6a"
+                    tick={{ fontSize: 10 }}
+                    interval="preserveStartEnd"
+                    minTickGap={20}
+                  />
+                  <YAxis
+                    yAxisId="price"
+                    stroke="#6a6a6a"
+                    tick={{ fontSize: 10 }}
+                    domain={['auto', 'auto']}
+                    orientation="right"
+                    width={45}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: '#181818',
+                      border: '1px solid #2a2a2a',
+                      borderRadius: 6,
+                      fontSize: 12,
+                    }}
+                    labelStyle={{ color: '#9a9a9a' }}
+                  />
+                  <Line
+                    yAxisId="price"
+                    type="monotone"
+                    dataKey="close"
+                    stroke="#e5e5e5"
+                    strokeWidth={1.5}
+                    dot={false}
+                    name="Close"
+                  />
+                  <Line
+                    yAxisId="price"
+                    type="monotone"
+                    dataKey="hma"
+                    stroke="#1DB954"
+                    strokeWidth={2}
+                    dot={false}
+                    name="HMA 50"
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Pannello 2: Heikin Ashi */}
+          <div className="card p-3 sm:p-5">
+            <h3 className="text-xs sm:text-sm font-semibold text-brand-muted mb-2 sm:mb-3 uppercase tracking-wide">
+              Heikin Ashi
+            </h3>
+            <div className="h-48 sm:h-64 lg:h-72">
+              <HeikinAshiChart rows={haRows} />
+            </div>
+          </div>
+
+          {/* Pannello 3: Volume */}
+          <div className="card p-3 sm:p-5">
+            <h3 className="text-xs sm:text-sm font-semibold text-brand-muted mb-2 sm:mb-3 uppercase tracking-wide">
+              Volume
+            </h3>
+            <div className="h-28 sm:h-40">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={candleRows}>
+                  <CartesianGrid stroke="#1e222d" strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="date"
+                    stroke="#6a6a6a"
+                    tick={{ fontSize: 10 }}
+                    minTickGap={20}
+                  />
+                  <YAxis
+                    stroke="#6a6a6a"
+                    tick={{ fontSize: 10 }}
+                    orientation="right"
+                    width={45}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: '#181818',
+                      border: '1px solid #2a2a2a',
+                      borderRadius: 6,
+                    }}
+                  />
+                  <Bar dataKey="volume" fill="#2a2a2a" />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
+/** Search ticker dedicato per mobile (form full-width) */
+function MobileTickerSearch({
+  defaultValue,
+  onChange,
+}: {
+  defaultValue: string;
+  onChange: (s: string) => void;
+}) {
+  const [v, setV] = useState(defaultValue);
+  useEffect(() => setV(defaultValue), [defaultValue]);
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onChange(v.toUpperCase());
+      }}
+      className="card p-3 flex items-center gap-2"
+    >
+      <Search className="w-4 h-4 text-brand-muted flex-shrink-0" />
+      <input
+        type="text"
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        placeholder="AAPL, BTC-USD, ENI.MI…"
+        className="input flex-1"
+        autoCapitalize="characters"
+      />
+      <button type="submit" className="btn-ghost flex-shrink-0">
+        Apri
+      </button>
+    </form>
+  );
+}
+
 /**
- * SVG custom per candele Heikin Ashi.
- * Recharts non ha candele native, quindi disegno con <rect> + <line>.
+ * SVG Heikin Ashi: già responsivo grazie al viewBox + preserveAspectRatio.
+ * Rendo gli assi più compatti in mobile.
  */
 function HeikinAshiChart({
   rows,
@@ -249,11 +333,8 @@ function HeikinAshiChart({
 
   const bw = plotW / rows.length;
   const cw = Math.max(1, bw * 0.7);
+  const yScale = (v: number) => PADDING.top + ((maxY - v) / range) * plotH;
 
-  const yScale = (v: number) =>
-    PADDING.top + ((maxY - v) / range) * plotH;
-
-  // Ticks Y
   const yTicks = 5;
   const ticks = Array.from({ length: yTicks + 1 }, (_, i) => {
     const val = minY + (range * i) / yTicks;
@@ -261,8 +342,12 @@ function HeikinAshiChart({
   });
 
   return (
-    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-      {/* Grid orizzontale */}
+    <svg
+      width="100%"
+      height="100%"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+    >
       {ticks.map((t, i) => (
         <g key={i}>
           <line
@@ -285,7 +370,6 @@ function HeikinAshiChart({
         </g>
       ))}
 
-      {/* Candele */}
       {rows.map((r, i) => {
         const x = PADDING.left + i * bw + bw / 2;
         const yOpen = yScale(r.open);
@@ -305,18 +389,11 @@ function HeikinAshiChart({
               stroke={color}
               strokeWidth={1}
             />
-            <rect
-              x={x - cw / 2}
-              y={top}
-              width={cw}
-              height={h}
-              fill={color}
-            />
+            <rect x={x - cw / 2} y={top} width={cw} height={h} fill={color} />
           </g>
         );
       })}
 
-      {/* Date axis (ogni ~10 barre) */}
       {rows
         .filter((_, i) => i % Math.ceil(rows.length / 8) === 0)
         .map((r, i) => {

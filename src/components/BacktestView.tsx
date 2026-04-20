@@ -75,9 +75,9 @@ export default function BacktestView({ initialMarkets }: Props) {
   })) ?? [];
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
       {/* Form parametri */}
-      <div className="card p-5 space-y-4">
+      <div className="card p-4 sm:p-5 space-y-4">
         <h3 className="font-semibold">Parametri Backtest</h3>
 
         <div>
@@ -108,7 +108,7 @@ export default function BacktestView({ initialMarkets }: Props) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           <Field label="Periodo storico">
             <select
               value={period}
@@ -186,7 +186,7 @@ export default function BacktestView({ initialMarkets }: Props) {
       {/* Stats + equity */}
       {result && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
             <StatCard
               icon={<Target className="w-5 h-5" />}
               label="Trade totali"
@@ -222,11 +222,11 @@ export default function BacktestView({ initialMarkets }: Props) {
             />
           </div>
 
-          <div className="card p-5">
-            <h3 className="text-sm font-semibold text-brand-muted mb-3 uppercase tracking-wide">
+          <div className="card p-3 sm:p-5">
+            <h3 className="text-xs sm:text-sm font-semibold text-brand-muted mb-2 sm:mb-3 uppercase tracking-wide">
               Equity Curve
             </h3>
-            <div className="h-72">
+            <div className="h-56 sm:h-72">
               <ResponsiveContainer>
                 <LineChart data={equityData}>
                   <CartesianGrid stroke="#1e222d" strokeDasharray="3 3" />
@@ -258,11 +258,11 @@ export default function BacktestView({ initialMarkets }: Props) {
             </div>
           </div>
 
-          <div className="card p-5">
-            <h3 className="text-sm font-semibold text-brand-muted mb-3 uppercase tracking-wide">
+          <div className="card p-3 sm:p-5">
+            <h3 className="text-xs sm:text-sm font-semibold text-brand-muted mb-2 sm:mb-3 uppercase tracking-wide">
               Distribuzione P&L trade
             </h3>
-            <div className="h-56">
+            <div className="h-48 sm:h-56">
               <ResponsiveContainer>
                 <BarChart data={pnlDist}>
                   <CartesianGrid stroke="#1e222d" strokeDasharray="3 3" />
@@ -300,19 +300,19 @@ export default function BacktestView({ initialMarkets }: Props) {
           </div>
 
           <div className="card overflow-hidden">
-            <div className="px-5 py-3 border-b border-brand-border font-semibold text-sm">
+            <div className="px-4 sm:px-5 py-2.5 sm:py-3 border-b border-brand-border font-semibold text-sm">
               Trade log ({result.trades.length})
             </div>
-            <div className="max-h-96 overflow-y-auto">
-              <table className="w-full text-xs">
+            <div className="max-h-96 overflow-auto">
+              <table className="w-full text-xs min-w-[640px]">
                 <thead className="bg-brand-panel sticky top-0">
                   <tr className="text-brand-muted text-left">
-                    <th className="px-4 py-2">Ticker</th>
-                    <th className="px-4 py-2">Entry</th>
-                    <th className="px-4 py-2">Exit</th>
-                    <th className="px-4 py-2">Giorni</th>
-                    <th className="px-4 py-2">Outcome</th>
-                    <th className="px-4 py-2 text-right">P&L</th>
+                    <th className="px-3 sm:px-4 py-2">Ticker</th>
+                    <th className="px-3 sm:px-4 py-2">Entry</th>
+                    <th className="px-3 sm:px-4 py-2">Exit</th>
+                    <th className="px-3 sm:px-4 py-2">Giorni</th>
+                    <th className="px-3 sm:px-4 py-2">Outcome</th>
+                    <th className="px-3 sm:px-4 py-2 text-right">P&L</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -321,21 +321,21 @@ export default function BacktestView({ initialMarkets }: Props) {
                       key={i}
                       className="border-t border-brand-border hover:bg-brand-panel/50"
                     >
-                      <td className="px-4 py-2 font-bold">{t.ticker}</td>
-                      <td className="px-4 py-2 font-mono">
+                      <td className="px-3 sm:px-4 py-2 font-bold">{t.ticker}</td>
+                      <td className="px-3 sm:px-4 py-2 font-mono">
                         {new Date(t.entryDate * 1000).toLocaleDateString('it-IT')}{' '}
                         <span className="text-brand-muted">
                           @ {t.entryPrice.toFixed(2)}
                         </span>
                       </td>
-                      <td className="px-4 py-2 font-mono">
+                      <td className="px-3 sm:px-4 py-2 font-mono">
                         {new Date(t.exitDate * 1000).toLocaleDateString('it-IT')}{' '}
                         <span className="text-brand-muted">
                           @ {t.exitPrice.toFixed(2)}
                         </span>
                       </td>
-                      <td className="px-4 py-2 font-mono">{t.barsHeld}</td>
-                      <td className="px-4 py-2">
+                      <td className="px-3 sm:px-4 py-2 font-mono">{t.barsHeld}</td>
+                      <td className="px-3 sm:px-4 py-2">
                         <OutcomeTag outcome={t.outcome} />
                       </td>
                       <td
