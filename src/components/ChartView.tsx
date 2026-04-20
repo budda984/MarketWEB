@@ -72,7 +72,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
     if (browseMarket === 'none') {
       return { browseIndex: -1, browseTotal: 0, browsePrev: null, browseNext: null };
     }
-    const list = MARKETS[browseMarket];
+    const list = MARKETS[browseMarket] as readonly string[];
     const idx = list.indexOf(ticker);
     const total = list.length;
     const prev = idx > 0 ? list[idx - 1] : list[total - 1]; // wrap
