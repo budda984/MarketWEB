@@ -28,6 +28,9 @@ type StrategyFilter =
   | 'PATTERN_IHS'
   | 'PATTERN_BULL_FLAG'
   | 'PATTERN_BEAR_FLAG'
+  | 'PATTERN_RISING_WEDGE'
+  | 'PATTERN_FALLING_WEDGE'
+  | 'PATTERN_CUP_HANDLE'
   | 'PATTERNS_ALL';
 
 type PatternData = {
@@ -182,6 +185,21 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
             active={strategy === 'PATTERN_BEAR_FLAG'}
             onClick={() => setStrategy('PATTERN_BEAR_FLAG')}
             label="🏳 Bear Flag"
+          />
+          <FilterBtn
+            active={strategy === 'PATTERN_RISING_WEDGE'}
+            onClick={() => setStrategy('PATTERN_RISING_WEDGE')}
+            label="🔻 Rising Wedge"
+          />
+          <FilterBtn
+            active={strategy === 'PATTERN_FALLING_WEDGE'}
+            onClick={() => setStrategy('PATTERN_FALLING_WEDGE')}
+            label="🔺 Falling Wedge"
+          />
+          <FilterBtn
+            active={strategy === 'PATTERN_CUP_HANDLE'}
+            onClick={() => setStrategy('PATTERN_CUP_HANDLE')}
+            label="☕ Cup & Handle"
           />
         </ScrollRow>
       </div>
@@ -394,6 +412,18 @@ function PatternRow({
     typeIcon = '🏳';
     typeName = 'Bear Flag';
     bullish = false;
+  } else if (s === 'PATTERN_RISING_WEDGE') {
+    typeIcon = '🔻';
+    typeName = 'Rising Wedge';
+    bullish = false;
+  } else if (s === 'PATTERN_FALLING_WEDGE') {
+    typeIcon = '🔺';
+    typeName = 'Falling Wedge';
+    bullish = true;
+  } else if (s === 'PATTERN_CUP_HANDLE') {
+    typeIcon = '☕';
+    typeName = 'Cup & Handle';
+    bullish = true;
   } else {
     typeIcon = '🎯';
     typeName = 'Pattern';

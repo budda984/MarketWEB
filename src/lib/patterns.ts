@@ -555,3 +555,478 @@ export function detectFlags(
 
   return deduped;
 }
+
+// ============================================================================
+// WEDGE PATTERN (Rising / Falling) — Fase 3a
+// ============================================================================
+/**
+ * Wedge: trendline convergenti sui pivot high e low.
+ *  - Rising Wedge: entrambe salgono, ma low sale più ripido (converge verso l'alto).
+ *    Segnale RIBASSISTA → breakout = close sotto la trendline inferiore.
+ *  - Falling Wedge: entrambe scendono, ma high scende più ripido.
+ *    Segnale RIALZISTA → breakout = close sopra la trendline superiore.
+ *
+ * Parametri rigorosi:
+ *  - Almeno 3 pivot per trendline (6 pivot totali)
+ *  - Durata: 20-80 candele
+ *  - R² minimo su entrambe le trendline: 0.5 (fit credibile)
+ *  - Le due trendline devono davvero convergere: |slope| entrambe > 0 E opposte in "aperturra"
+ *  - Confidence minima: 0.7
+ *
+ * Strength:
+ *  - 3 = breakout confermato (close oltre trendline ≤ 2 candele fa)
+ *  - 2 = wedge formato, in attesa breakout
+ */
+
+export type WedgePattern = {
+  type: 'RISING_WEDGE' | 'FALLING_WEDGE';
+  startIdx: number;
+  endIdx: number;
+  highPivots: Pivot[];
+  lowPivots: Pivot[];
+  highSlope: number;
+  highIntercept: number;
+  lowSlope: number;
+  lowIntercept: number;
+  highAtLastBar: number;
+  lowAtLastBar: number;
+  breakoutLevel: number;
+  direction: 'up' | 'down';
+  breakoutConfirmed: boolean;
+  breakoutBarsAgo: number | null;
+  confidence: number;
+  target: number;
+  stopLoss: number;
+  strength: 1 | 2 | 3;
+  lastPrice: number;
+};
+
+type WedgeOpts = {
+  leftBars?: number;
+  rightBars?: number;
+  minPivotsEach?: number;
+  durationMin?: number;
+  durationMax?: number;
+  minR2?: number;
+  minConfidence?: number;
+  breakoutWindow?: number;
+};
+
+const DEFAULT_WEDGE: Required<WedgeOpts> = {
+  leftBars: 5,
+  rightBars: 5,
+  minPivotsEach: 3,
+  durationMin: 20,
+  durationMax: 80,
+  minR2: 0.5,
+  minConfidence: 0.7,
+  breakoutWindow: 3,
+};
+
+export function detectWedges(
+  candles: OHLCV[],
+  userOpts: WedgeOpts = {}
+): WedgePattern[] {
+  const opts = { ...DEFAULT_WEDGE, ...userOpts };
+  if (candles.length < opts.durationMin + opts.leftBars + opts.rightBars + 5) {
+    return [];
+  }
+
+  const pivots = findPivots(candles, opts.leftBars, opts.rightBars);
+  const allHighs = pivots.filter((p) => p.type === 'high');
+  const allLows = pivots.filter((p) => p.type === 'low');
+
+  const out: WedgePattern[] = [];
+  const lastIdx = candles.length - 1;
+  const lastPrice = candles[lastIdx].c;
+
+  // Cerco wedge che finiscono nelle ultime 30 candele (recenti)
+  const minEnd = Math.max(opts.durationMin, lastIdx - 30);
+
+  for (let endIdx = minEnd; endIdx <= lastIdx; endIdx++) {
+    for (
+      let startIdx = endIdx - opts.durationMax;
+      startIdx <= endIdx - opts.durationMin;
+      startIdx += 5 // step di 5 per velocità
+    ) {
+      if (startIdx < 0) continue;
+
+      const highs = allHighs.filter(
+        (p) => p.idx >= startIdx && p.idx <= endIdx
+      );
+      const lows = allLows.filter(
+        (p) => p.idx >= startIdx && p.idx <= endIdx
+      );
+
+      if (
+        highs.length < opts.minPivotsEach ||
+        lows.length < opts.minPivotsEach
+      ) {
+        continue;
+      }
+
+      const regHigh = linreg(
+        highs.map((p) => p.idx),
+        highs.map((p) => p.price)
+      );
+      const regLow = linreg(
+        lows.map((p) => p.idx),
+        lows.map((p) => p.price)
+      );
+
+      if (regHigh.r2 < opts.minR2 || regLow.r2 < opts.minR2) continue;
+
+      // Rising wedge: entrambe salgono, low più ripida
+      // Falling wedge: entrambe scendono, high più ripida
+      let type: 'RISING_WEDGE' | 'FALLING_WEDGE' | null = null;
+      let direction: 'up' | 'down' = 'down';
+
+      if (regHigh.slope > 0 && regLow.slope > 0 && regLow.slope > regHigh.slope) {
+        type = 'RISING_WEDGE';
+        direction = 'down'; // segnale ribassista
+      } else if (
+        regHigh.slope < 0 &&
+        regLow.slope < 0 &&
+        Math.abs(regHigh.slope) > Math.abs(regLow.slope)
+      ) {
+        type = 'FALLING_WEDGE';
+        direction = 'up'; // segnale rialzista
+      }
+      if (!type) continue;
+
+      // Verifico che le due trendline stiano effettivamente convergendo,
+      // cioè al lastIdx la distanza sia minore che all'inizio
+      const highAtStart = regHigh.slope * startIdx + regHigh.intercept;
+      const lowAtStart = regLow.slope * startIdx + regLow.intercept;
+      const highAtEnd = regHigh.slope * endIdx + regHigh.intercept;
+      const lowAtEnd = regLow.slope * endIdx + regLow.intercept;
+      const widthStart = highAtStart - lowAtStart;
+      const widthEnd = highAtEnd - lowAtEnd;
+      if (widthEnd >= widthStart * 0.85) continue; // deve restringersi almeno del 15%
+
+      // Confidence: combinazione di R² e quanti pivot ci sono
+      const avgR2 = (regHigh.r2 + regLow.r2) / 2;
+      const pivotsBonus = Math.min(1, (highs.length + lows.length - 6) / 4);
+      const convergenceBonus = 1 - widthEnd / widthStart;
+      const confidence =
+        avgR2 * 0.5 + pivotsBonus * 0.2 + convergenceBonus * 0.3;
+      if (confidence < opts.minConfidence) continue;
+
+      // Breakout
+      const highAtLast = regHigh.slope * lastIdx + regHigh.intercept;
+      const lowAtLast = regLow.slope * lastIdx + regLow.intercept;
+      const breakoutLevel = type === 'RISING_WEDGE' ? lowAtLast : highAtLast;
+
+      let breakoutBarsAgo: number | null = null;
+      const maxK = Math.min(opts.breakoutWindow, lastIdx - endIdx);
+      for (let k = 0; k <= maxK; k++) {
+        const barIdx = lastIdx - k;
+        if (barIdx <= endIdx) break;
+        const bar = candles[barIdx];
+        const hBar = regHigh.slope * barIdx + regHigh.intercept;
+        const lBar = regLow.slope * barIdx + regLow.intercept;
+        if (type === 'RISING_WEDGE' && bar.c < lBar) {
+          breakoutBarsAgo = k;
+          break;
+        }
+        if (type === 'FALLING_WEDGE' && bar.c > hBar) {
+          breakoutBarsAgo = k;
+          break;
+        }
+      }
+
+      let strength: 1 | 2 | 3 = 2;
+      if (breakoutBarsAgo !== null && breakoutBarsAgo <= 2) strength = 3;
+
+      // Target: proiezione della larghezza iniziale nella direzione del breakout
+      const target =
+        type === 'RISING_WEDGE'
+          ? breakoutLevel - widthStart
+          : breakoutLevel + widthStart;
+      const stopLoss =
+        type === 'RISING_WEDGE' ? highAtLast * 1.005 : lowAtLast * 0.995;
+
+      out.push({
+        type,
+        startIdx,
+        endIdx,
+        highPivots: highs,
+        lowPivots: lows,
+        highSlope: regHigh.slope,
+        highIntercept: regHigh.intercept,
+        lowSlope: regLow.slope,
+        lowIntercept: regLow.intercept,
+        highAtLastBar: highAtLast,
+        lowAtLastBar: lowAtLast,
+        breakoutLevel,
+        direction,
+        breakoutConfirmed: breakoutBarsAgo !== null,
+        breakoutBarsAgo,
+        confidence,
+        target,
+        stopLoss,
+        strength,
+        lastPrice,
+      });
+    }
+  }
+
+  // Dedup
+  out.sort((a, b) => b.confidence - a.confidence);
+  const deduped: WedgePattern[] = [];
+  const used: Array<[number, number]> = [];
+  for (const p of out) {
+    const overlap = used.some(([s, e]) => p.startIdx < e && p.endIdx > s);
+    if (!overlap) {
+      deduped.push(p);
+      used.push([p.startIdx, p.endIdx]);
+    }
+  }
+  return deduped;
+}
+
+// ============================================================================
+// CUP AND HANDLE — Fase 3b
+// ============================================================================
+/**
+ * Cup and Handle (versione classica O'Neil, solo rialzista):
+ *  - CUP: formazione a "U" — massimo A, discesa graduale a minimo B (profondità
+ *    15-35%), risalita a C ≈ A (entro 5%). Durata tipica 30-130 candele.
+ *  - HANDLE: consolidamento dopo C, 5-25 candele, depth 5-15% del cup.
+ *    Direzione lievemente discendente.
+ *  - BREAKOUT: close > livello rim (max di A, C) = entry zone.
+ *
+ * Parametri rigorosi (tuned per 1D):
+ *  - Cup: 30-130 candele, depth 15-35%, C entro 5% di A
+ *  - Shape: deve essere arrotondato (NON una V). Calcolo il rapporto
+ *    tra profondità minima interna e profondità media: se è alto (coppa
+ *    ben scavata in modo graduale), passa.
+ *  - Handle: 5-25 candele dopo C, depth 5-15% del cup, non deve rompere B
+ *  - Confidence minima: 0.7
+ */
+
+export type CupHandlePattern = {
+  type: 'CUP_HANDLE';
+  startIdx: number; // A
+  bottomIdx: number; // B
+  rightRimIdx: number; // C
+  handleEndIdx: number;
+  aPrice: number;
+  bPrice: number;
+  cPrice: number;
+  rimLevel: number; // max(A, C)
+  cupDepthPct: number;
+  handleDepthPct: number;
+  breakoutLevel: number;
+  direction: 'up';
+  breakoutConfirmed: boolean;
+  breakoutBarsAgo: number | null;
+  confidence: number;
+  target: number;
+  stopLoss: number;
+  strength: 1 | 2 | 3;
+  lastPrice: number;
+};
+
+type CupOpts = {
+  cupMinBars?: number;
+  cupMaxBars?: number;
+  cupMinDepth?: number;
+  cupMaxDepth?: number;
+  rimTolerance?: number; // quanto C può differire da A
+  handleMinBars?: number;
+  handleMaxBars?: number;
+  handleMinDepth?: number;
+  handleMaxDepth?: number;
+  minConfidence?: number;
+  breakoutWindow?: number;
+  leftBars?: number;
+  rightBars?: number;
+};
+
+const DEFAULT_CUP: Required<CupOpts> = {
+  cupMinBars: 30,
+  cupMaxBars: 130,
+  cupMinDepth: 0.15,
+  cupMaxDepth: 0.35,
+  rimTolerance: 0.05,
+  handleMinBars: 5,
+  handleMaxBars: 25,
+  handleMinDepth: 0.05,
+  handleMaxDepth: 0.15,
+  minConfidence: 0.7,
+  breakoutWindow: 3,
+  leftBars: 5,
+  rightBars: 5,
+};
+
+export function detectCupHandle(
+  candles: OHLCV[],
+  userOpts: CupOpts = {}
+): CupHandlePattern[] {
+  const opts = { ...DEFAULT_CUP, ...userOpts };
+  const minLen =
+    opts.cupMinBars + opts.handleMinBars + opts.leftBars + opts.rightBars + 5;
+  if (candles.length < minLen) return [];
+
+  const pivots = findPivots(candles, opts.leftBars, opts.rightBars);
+  const highs = pivots.filter((p) => p.type === 'high');
+  const lows = pivots.filter((p) => p.type === 'low');
+
+  const out: CupHandlePattern[] = [];
+  const lastIdx = candles.length - 1;
+  const lastPrice = candles[lastIdx].c;
+
+  // Per ogni coppia (A, C) di pivot high, cerco il minimo B in mezzo
+  for (let i = 0; i < highs.length; i++) {
+    const A = highs[i];
+    for (let j = i + 1; j < highs.length; j++) {
+      const C = highs[j];
+      const cupLen = C.idx - A.idx;
+      if (cupLen < opts.cupMinBars || cupLen > opts.cupMaxBars) continue;
+
+      // C ≈ A entro tolleranza
+      const rimDiff = Math.abs(A.price - C.price) / A.price;
+      if (rimDiff > opts.rimTolerance) continue;
+
+      // Trova il minimo (pivot low o low assoluto) fra A e C
+      const lowsBetween = lows.filter(
+        (p) => p.idx > A.idx && p.idx < C.idx
+      );
+      if (lowsBetween.length === 0) continue;
+      const B = lowsBetween.reduce((min, p) =>
+        p.price < min.price ? p : min
+      );
+
+      // Profondità coppa
+      const cupDepth = (A.price - B.price) / A.price;
+      if (cupDepth < opts.cupMinDepth || cupDepth > opts.cupMaxDepth) continue;
+
+      // Forma arrotondata: calcolo la varianza dei minimi intorno a B.
+      // Se c'è un plateau di minimi simili è una U; se c'è un solo minimo
+      // secco è una V → scarto.
+      const cupCloses: number[] = [];
+      for (let k = A.idx; k <= C.idx; k++) cupCloses.push(candles[k].c);
+      const cupMin = Math.min(...cupCloses);
+      const thresholdLow = cupMin * 1.03; // 3% sopra il minimo
+      const barsNearBottom = cupCloses.filter((c) => c <= thresholdLow).length;
+      const bottomFraction = barsNearBottom / cupCloses.length;
+      if (bottomFraction < 0.1) continue; // V shape
+
+      // Asimmetria: le due metà del cup dovrebbero avere durata simile
+      const halfLen = cupLen / 2;
+      const bOffset = B.idx - A.idx;
+      const asymmetry = Math.abs(bOffset - halfLen) / halfLen;
+      if (asymmetry > 0.5) continue;
+
+      // --- HANDLE ---
+      // Il manico parte da C e dura handleMinBars..handleMaxBars
+      let bestHandle: {
+        endIdx: number;
+        depth: number;
+        confidence: number;
+      } | null = null;
+
+      for (
+        let hLen = opts.handleMinBars;
+        hLen <= opts.handleMaxBars;
+        hLen++
+      ) {
+        const handleEnd = C.idx + hLen;
+        if (handleEnd > lastIdx) break;
+
+        const handleLows = candles
+          .slice(C.idx + 1, handleEnd + 1)
+          .map((c) => c.l);
+        if (handleLows.length === 0) continue;
+        const handleMin = Math.min(...handleLows);
+        const handleDepth = (C.price - handleMin) / C.price;
+
+        if (
+          handleDepth < opts.handleMinDepth ||
+          handleDepth > opts.handleMaxDepth
+        ) {
+          continue;
+        }
+        // Il manico NON deve rompere B
+        if (handleMin <= B.price) continue;
+
+        // Confidence dell'handle
+        const symmetryBonus = 1 - asymmetry;
+        const depthQuality = 1 - Math.abs(handleDepth - 0.10) / 0.10;
+        const handleConf =
+          symmetryBonus * 0.4 + bottomFraction * 0.3 + depthQuality * 0.3;
+        if (handleConf < opts.minConfidence) continue;
+
+        if (!bestHandle || handleConf > bestHandle.confidence) {
+          bestHandle = {
+            endIdx: handleEnd,
+            depth: handleDepth,
+            confidence: handleConf,
+          };
+        }
+      }
+      if (!bestHandle) continue;
+
+      // Rim = max di A, C
+      const rimLevel = Math.max(A.price, C.price);
+      const breakoutLevel = rimLevel;
+
+      // Breakout confermato?
+      let breakoutBarsAgo: number | null = null;
+      const maxK = Math.min(opts.breakoutWindow, lastIdx - bestHandle.endIdx);
+      for (let k = 0; k <= maxK; k++) {
+        const barIdx = lastIdx - k;
+        if (barIdx <= bestHandle.endIdx) break;
+        const bar = candles[barIdx];
+        if (bar.c > breakoutLevel) {
+          breakoutBarsAgo = k;
+          break;
+        }
+      }
+
+      let strength: 1 | 2 | 3 = 2;
+      if (breakoutBarsAgo !== null && breakoutBarsAgo <= 2) strength = 3;
+
+      // Target classico O'Neil: entry + profondità coppa
+      const target = breakoutLevel + (A.price - B.price);
+      const stopLoss = B.price * 0.995;
+
+      out.push({
+        type: 'CUP_HANDLE',
+        startIdx: A.idx,
+        bottomIdx: B.idx,
+        rightRimIdx: C.idx,
+        handleEndIdx: bestHandle.endIdx,
+        aPrice: A.price,
+        bPrice: B.price,
+        cPrice: C.price,
+        rimLevel,
+        cupDepthPct: cupDepth * 100,
+        handleDepthPct: bestHandle.depth * 100,
+        breakoutLevel,
+        direction: 'up',
+        breakoutConfirmed: breakoutBarsAgo !== null,
+        breakoutBarsAgo,
+        confidence: bestHandle.confidence,
+        target,
+        stopLoss,
+        strength,
+        lastPrice,
+      });
+    }
+  }
+
+  // Dedup
+  out.sort((a, b) => b.confidence - a.confidence);
+  const deduped: CupHandlePattern[] = [];
+  const used: Array<[number, number]> = [];
+  for (const p of out) {
+    const overlap = used.some(([s, e]) => p.startIdx < e && p.handleEndIdx > s);
+    if (!overlap) {
+      deduped.push(p);
+      used.push([p.startIdx, p.handleEndIdx]);
+    }
+  }
+  return deduped;
+}
