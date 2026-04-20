@@ -49,9 +49,31 @@ export async function POST(req: Request) {
 
   const candlesByTicker = await yahooDownloadMany(universe, period, '1d', 12);
   const tradesByTicker: Record<string, ReturnType<typeof backtestTicker>> = {};
+  const skipped: string[] = [];
   for (const [t, candles] of Object.entries(candlesByTicker)) {
-    if (candles.length > 0) {
+    // Skip ticker con dati insufficienti o sospetti
+    if (!candles || candles.length < 30) {
+      skipped.push(t);
+      continue;
+    }
+    // Verifica che i dati abbiano forma valida (no NaN, no close a 0)
+    const hasBadData = candles.some(
+      (c) =>
+        !Number.isFinite(c.c) ||
+        !Number.isFinite(c.o) ||
+        !Number.isFinite(c.h) ||
+        !Number.isFinite(c.l) ||
+        c.c <= 0 ||
+        c.o <= 0
+    );
+    if (hasBadData) {
+      skipped.push(t);
+      continue;
+    }
+    try {
       tradesByTicker[t] = backtestTicker(t, candles, params);
+    } catch {
+      skipped.push(t);
     }
   }
 
@@ -74,5 +96,5 @@ export async function POST(req: Request) {
     });
   }
 
-  return NextResponse.json(result);
+  return NextResponse.json({ ...result, skipped, scanned: universe.length });
 }

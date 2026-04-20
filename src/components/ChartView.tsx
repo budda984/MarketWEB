@@ -11,9 +11,16 @@ import {
   CartesianGrid,
   Bar,
 } from 'recharts';
-import { Search } from 'lucide-react';
+import {
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  LineChart as LineChartIcon,
+  CandlestickChart,
+} from 'lucide-react';
 import { hma, heikinAshi } from '@/lib/indicators';
 import type { OHLCV } from '@/lib/yahoo';
+import { MARKETS, type MarketKey } from '@/lib/tickers';
 import AlertsPanel from './AlertsPanel';
 
 type Props = {
@@ -33,10 +40,14 @@ type QuoteData = {
   candles: OHLCV[];
 };
 
+type ChartMode = 'line' | 'candles';
+
 export default function ChartView({ ticker, onTickerChange }: Props) {
   const [data, setData] = useState<QuoteData | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [browseMarket, setBrowseMarket] = useState<MarketKey | 'none'>('none');
+  const [chartMode, setChartMode] = useState<ChartMode>('line');
 
   useEffect(() => {
     let cancel = false;
@@ -56,6 +67,24 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
     };
   }, [ticker]);
 
+  // Navigazione: se il browseMarket è selezionato, calcolo indice del ticker corrente
+  const { browseIndex, browseTotal, browsePrev, browseNext } = useMemo(() => {
+    if (browseMarket === 'none') {
+      return { browseIndex: -1, browseTotal: 0, browsePrev: null, browseNext: null };
+    }
+    const list = MARKETS[browseMarket];
+    const idx = list.indexOf(ticker);
+    const total = list.length;
+    const prev = idx > 0 ? list[idx - 1] : list[total - 1]; // wrap
+    const next = idx < total - 1 ? list[idx + 1] : list[0]; // wrap
+    return {
+      browseIndex: idx,
+      browseTotal: total,
+      browsePrev: prev,
+      browseNext: next,
+    };
+  }, [browseMarket, ticker]);
+
   const { candleRows, haRows } = useMemo(() => {
     if (!data?.candles?.length) return { candleRows: [], haRows: [] };
     const closes = data.candles.map((c) => c.c);
@@ -73,6 +102,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
       close: c.c,
       volume: c.v,
       hma: hmaArr[i],
+      bullish: c.c >= c.o,
     }));
     const haRows = ha.map((c) => ({
       t: c.t * 1000,
@@ -91,12 +121,55 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
-      {/* Ricerca ticker visibile solo in mobile (desktop ce l'ha nell'header) */}
-      {onTickerChange && (
-        <div className="sm:hidden">
-          <MobileTickerSearch defaultValue={ticker} onChange={onTickerChange} />
+      {/* Navigazione mercato + search */}
+      <div className="card p-3 flex flex-col sm:flex-row gap-2">
+        <div className="flex items-center gap-2 flex-1">
+          <Search className="w-4 h-4 text-brand-muted flex-shrink-0" />
+          {onTickerChange ? (
+            <InlineSearch defaultValue={ticker} onChange={onTickerChange} />
+          ) : (
+            <span className="font-mono font-bold">{ticker}</span>
+          )}
         </div>
-      )}
+
+        {onTickerChange && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <select
+              value={browseMarket}
+              onChange={(e) => setBrowseMarket(e.target.value as MarketKey | 'none')}
+              className="input text-xs py-1.5 flex-1 sm:flex-none"
+            >
+              <option value="none">Sfoglia mercato…</option>
+              {(Object.keys(MARKETS) as MarketKey[]).map((m) => (
+                <option key={m} value={m}>
+                  {m} ({MARKETS[m].length})
+                </option>
+              ))}
+            </select>
+            {browseMarket !== 'none' && browsePrev && browseNext && (
+              <>
+                <button
+                  onClick={() => onTickerChange(browsePrev)}
+                  className="btn-ghost p-1.5 text-xs"
+                  title="Precedente"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-xs font-mono text-brand-muted whitespace-nowrap px-1">
+                  {browseIndex >= 0 ? browseIndex + 1 : '—'}/{browseTotal}
+                </span>
+                <button
+                  onClick={() => onTickerChange(browseNext)}
+                  className="btn-ghost p-1.5 text-xs"
+                  title="Successivo"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {loading && (
         <div className="p-10 text-center text-brand-muted text-sm">
@@ -111,7 +184,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
 
       {!loading && !err && data && candleRows.length > 0 && (
         <>
-          {/* Header prezzi — impilato verticalmente in mobile, orizzontale desktop */}
+          {/* Header prezzi */}
           {data.quote && (
             <div className="card p-4 sm:p-5">
               <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-3 sm:gap-6">
@@ -124,7 +197,6 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
                       {data.quote.ticker}
                     </div>
                   </div>
-                  {/* Variazione affianco in mobile */}
                   <div
                     className={`text-lg font-mono sm:hidden ${
                       data.quote.changePct >= 0
@@ -144,7 +216,6 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
                   </span>
                 </div>
 
-                {/* Variazione desktop */}
                 <div
                   className={`hidden sm:block text-lg font-mono ${
                     data.quote.changePct >= 0
@@ -162,65 +233,98 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
             </div>
           )}
 
-          {/* Pannello avvisi di prezzo */}
+          {/* Alert pannello */}
           <AlertsPanel
             ticker={ticker}
             currentPrice={data.quote?.price ?? null}
           />
 
-          {/* Pannello 1: Candle + HMA 50 */}
+          {/* Pannello 1: Linea o Candele + HMA 50 */}
           <div className="card p-3 sm:p-5">
-            <h3 className="text-xs sm:text-sm font-semibold text-brand-muted mb-2 sm:mb-3 uppercase tracking-wide">
-              Candlestick + Hull MA 50
-            </h3>
+            <div className="flex items-center justify-between mb-2 sm:mb-3">
+              <h3 className="text-xs sm:text-sm font-semibold text-brand-muted uppercase tracking-wide">
+                {chartMode === 'line' ? 'Linea' : 'Candlestick'} + Hull MA 50
+              </h3>
+              <div className="flex items-center gap-1 bg-brand-panel rounded p-0.5">
+                <button
+                  onClick={() => setChartMode('line')}
+                  className={`px-2 py-1 rounded text-xs flex items-center gap-1 transition ${
+                    chartMode === 'line'
+                      ? 'bg-brand-green text-black font-semibold'
+                      : 'text-brand-muted hover:text-brand-text'
+                  }`}
+                  title="Vista linea"
+                >
+                  <LineChartIcon className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Linea</span>
+                </button>
+                <button
+                  onClick={() => setChartMode('candles')}
+                  className={`px-2 py-1 rounded text-xs flex items-center gap-1 transition ${
+                    chartMode === 'candles'
+                      ? 'bg-brand-green text-black font-semibold'
+                      : 'text-brand-muted hover:text-brand-text'
+                  }`}
+                  title="Vista candele"
+                >
+                  <CandlestickChart className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Candele</span>
+                </button>
+              </div>
+            </div>
+
             <div className="h-64 sm:h-80 lg:h-96">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={candleRows}>
-                  <CartesianGrid stroke="#1e222d" strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="date"
-                    stroke="#6a6a6a"
-                    tick={{ fontSize: 10 }}
-                    interval="preserveStartEnd"
-                    minTickGap={20}
-                  />
-                  <YAxis
-                    yAxisId="price"
-                    stroke="#6a6a6a"
-                    tick={{ fontSize: 10 }}
-                    domain={['auto', 'auto']}
-                    orientation="right"
-                    width={45}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: '#181818',
-                      border: '1px solid #2a2a2a',
-                      borderRadius: 6,
-                      fontSize: 12,
-                    }}
-                    labelStyle={{ color: '#9a9a9a' }}
-                  />
-                  <Line
-                    yAxisId="price"
-                    type="monotone"
-                    dataKey="close"
-                    stroke="#e5e5e5"
-                    strokeWidth={1.5}
-                    dot={false}
-                    name="Close"
-                  />
-                  <Line
-                    yAxisId="price"
-                    type="monotone"
-                    dataKey="hma"
-                    stroke="#1DB954"
-                    strokeWidth={2}
-                    dot={false}
-                    name="HMA 50"
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
+              {chartMode === 'line' ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={candleRows}>
+                    <CartesianGrid stroke="#1e222d" strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="date"
+                      stroke="#6a6a6a"
+                      tick={{ fontSize: 10 }}
+                      interval="preserveStartEnd"
+                      minTickGap={20}
+                    />
+                    <YAxis
+                      yAxisId="price"
+                      stroke="#6a6a6a"
+                      tick={{ fontSize: 10 }}
+                      domain={['auto', 'auto']}
+                      orientation="right"
+                      width={45}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: '#181818',
+                        border: '1px solid #2a2a2a',
+                        borderRadius: 6,
+                        fontSize: 12,
+                      }}
+                      labelStyle={{ color: '#9a9a9a' }}
+                    />
+                    <Line
+                      yAxisId="price"
+                      type="monotone"
+                      dataKey="close"
+                      stroke="#e5e5e5"
+                      strokeWidth={1.5}
+                      dot={false}
+                      name="Close"
+                    />
+                    <Line
+                      yAxisId="price"
+                      type="monotone"
+                      dataKey="hma"
+                      stroke="#1DB954"
+                      strokeWidth={2}
+                      dot={false}
+                      name="HMA 50"
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <CandleChart rows={candleRows} withHMA />
+              )}
             </div>
           </div>
 
@@ -273,8 +377,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
   );
 }
 
-/** Search ticker dedicato per mobile (form full-width) */
-function MobileTickerSearch({
+function InlineSearch({
   defaultValue,
   onChange,
 }: {
@@ -289,18 +392,17 @@ function MobileTickerSearch({
         e.preventDefault();
         onChange(v.toUpperCase());
       }}
-      className="card p-3 flex items-center gap-2"
+      className="flex items-center gap-2 flex-1"
     >
-      <Search className="w-4 h-4 text-brand-muted flex-shrink-0" />
       <input
         type="text"
         value={v}
         onChange={(e) => setV(e.target.value)}
-        placeholder="AAPL, BTC-USD, ENI.MI…"
-        className="input flex-1"
+        placeholder="AAPL, BTC-USD…"
+        className="input flex-1 min-w-0 font-mono"
         autoCapitalize="characters"
       />
-      <button type="submit" className="btn-ghost flex-shrink-0">
+      <button type="submit" className="btn-ghost flex-shrink-0 text-xs">
         Apri
       </button>
     </form>
@@ -308,11 +410,11 @@ function MobileTickerSearch({
 }
 
 /**
- * SVG Heikin Ashi: già responsivo grazie al viewBox + preserveAspectRatio.
- * Rendo gli assi più compatti in mobile.
+ * Candle chart SVG responsive. Disegna candele OHLC con wicks e HMA overlay.
  */
-function HeikinAshiChart({
+function CandleChart({
   rows,
+  withHMA,
 }: {
   rows: Array<{
     t: number;
@@ -322,13 +424,15 @@ function HeikinAshiChart({
     low: number;
     close: number;
     bullish: boolean;
+    hma?: number | null;
   }>;
+  withHMA?: boolean;
 }) {
   if (rows.length === 0) return null;
 
-  const W = 1200;
-  const H = 280;
-  const PADDING = { top: 10, right: 50, bottom: 30, left: 10 };
+  const W = 1400;
+  const H = 400;
+  const PADDING = { top: 10, right: 55, bottom: 30, left: 10 };
   const plotW = W - PADDING.left - PADDING.right;
   const plotH = H - PADDING.top - PADDING.bottom;
 
@@ -336,17 +440,39 @@ function HeikinAshiChart({
   const lows = rows.map((r) => r.low);
   const minY = Math.min(...lows);
   const maxY = Math.max(...highs);
-  const range = maxY - minY || 1;
+  const pad = (maxY - minY) * 0.05 || 1;
+  const yMin = minY - pad;
+  const yMax = maxY + pad;
+  const range = yMax - yMin;
 
   const bw = plotW / rows.length;
-  const cw = Math.max(1, bw * 0.7);
-  const yScale = (v: number) => PADDING.top + ((maxY - v) / range) * plotH;
+  const cw = Math.max(1.5, bw * 0.7);
+  const yScale = (v: number) =>
+    PADDING.top + ((yMax - v) / range) * plotH;
 
-  const yTicks = 5;
+  const yTicks = 6;
   const ticks = Array.from({ length: yTicks + 1 }, (_, i) => {
-    const val = minY + (range * i) / yTicks;
+    const val = yMin + (range * i) / yTicks;
     return { val, y: yScale(val) };
   });
+
+  // HMA line path
+  let hmaPath = '';
+  if (withHMA) {
+    const pts = rows
+      .map((r, i) => {
+        if (r.hma == null || !Number.isFinite(r.hma)) return null;
+        const x = PADDING.left + i * bw + bw / 2;
+        const y = yScale(r.hma);
+        return [x, y] as [number, number];
+      })
+      .filter((p): p is [number, number] => p !== null);
+    if (pts.length > 0) {
+      hmaPath =
+        'M ' +
+        pts.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L ');
+    }
+  }
 
   return (
     <svg
@@ -355,6 +481,7 @@ function HeikinAshiChart({
       viewBox={`0 0 ${W} ${H}`}
       preserveAspectRatio="none"
     >
+      {/* Griglia orizzontale */}
       {ticks.map((t, i) => (
         <g key={i}>
           <line
@@ -377,6 +504,7 @@ function HeikinAshiChart({
         </g>
       ))}
 
+      {/* Candele */}
       {rows.map((r, i) => {
         const x = PADDING.left + i * bw + bw / 2;
         const yOpen = yScale(r.open);
@@ -388,6 +516,7 @@ function HeikinAshiChart({
         const h = Math.max(1, Math.abs(yClose - yOpen));
         return (
           <g key={i}>
+            {/* Wick */}
             <line
               x1={x}
               x2={x}
@@ -396,11 +525,24 @@ function HeikinAshiChart({
               stroke={color}
               strokeWidth={1}
             />
+            {/* Body */}
             <rect x={x - cw / 2} y={top} width={cw} height={h} fill={color} />
           </g>
         );
       })}
 
+      {/* HMA overlay */}
+      {hmaPath && (
+        <path
+          d={hmaPath}
+          fill="none"
+          stroke="#1DB954"
+          strokeWidth={2}
+          opacity={0.9}
+        />
+      )}
+
+      {/* Label X */}
       {rows
         .filter((_, i) => i % Math.ceil(rows.length / 8) === 0)
         .map((r, i) => {
@@ -422,4 +564,24 @@ function HeikinAshiChart({
         })}
     </svg>
   );
+}
+
+/**
+ * SVG Heikin Ashi
+ */
+function HeikinAshiChart({
+  rows,
+}: {
+  rows: Array<{
+    t: number;
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    bullish: boolean;
+  }>;
+}) {
+  if (rows.length === 0) return null;
+  return <CandleChart rows={rows} />;
 }
