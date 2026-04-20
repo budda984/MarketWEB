@@ -2,7 +2,12 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { yahooDownloadMany, type OHLCV } from '@/lib/yahoo';
 import { scanTickers, type SignalStrength } from '@/lib/signals';
-import { detectHeadAndShoulders, type HSPattern } from '@/lib/patterns';
+import {
+  detectHeadAndShoulders,
+  detectFlags,
+  type HSPattern,
+  type FlagPattern,
+} from '@/lib/patterns';
 import { MARKETS, type MarketKey, ALL_TICKERS } from '@/lib/tickers';
 
 export const runtime = 'nodejs';
@@ -14,34 +19,22 @@ type Body = {
   tickers?: string[];
   minStrength?: SignalStrength;
   persist?: boolean;
-  includePatterns?: boolean; // default true
+  includePatterns?: boolean;
 };
 
-type ScanCombined = {
-  hmaSignals: number;
-  patternSignals: number;
-};
-
-/**
- * POST /api/scan
- * Scansione manuale. Valuta HMA+HA e, se includePatterns=true, anche H&S/IHS.
- */
 export async function POST(req: Request) {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = (await req.json().catch(() => ({}))) as Body;
   const minStrength = (body.minStrength ?? 1) as SignalStrength;
   const persist = body.persist ?? false;
   const includePatterns = body.includePatterns ?? true;
 
-  // Universo
   let universe: string[];
   if (body.tickers && body.tickers.length > 0) {
     universe = body.tickers;
@@ -57,26 +50,31 @@ export async function POST(req: Request) {
   const candlesByTicker = await yahooDownloadMany(universe, '3mo', '1d', 12);
   const hmaSignals = await scanTickers(candlesByTicker, minStrength);
 
-  // Pattern detection su ogni ticker con abbastanza candele
-  const patternRows: Array<{
-    ticker: string;
-    pattern: HSPattern;
-    candles: OHLCV[];
-  }> = [];
+  type HSRow = { ticker: string; pattern: HSPattern; candles: OHLCV[] };
+  type FlagRow = { ticker: string; pattern: FlagPattern; candles: OHLCV[] };
+  const hsRows: HSRow[] = [];
+  const flagRows: FlagRow[] = [];
+
   if (includePatterns) {
     for (const [ticker, candles] of Object.entries(candlesByTicker)) {
       if (candles.length < 60) continue;
-      const patterns = detectHeadAndShoulders(candles);
-      for (const p of patterns) {
-        if (p.strength < 2) continue; // rigoroso: no "in formazione"
-        patternRows.push({ ticker, pattern: p, candles });
+
+      const hs = detectHeadAndShoulders(candles);
+      for (const p of hs) {
+        if (p.strength < 2) continue;
+        hsRows.push({ ticker, pattern: p, candles });
+      }
+
+      const flags = detectFlags(candles);
+      for (const p of flags) {
+        if (p.strength < 2) continue;
+        flagRows.push({ ticker, pattern: p, candles });
       }
     }
   }
 
   const elapsed = Date.now() - t0;
 
-  // Persistenza
   if (persist) {
     const rows: unknown[] = [];
 
@@ -99,7 +97,7 @@ export async function POST(req: Request) {
       });
     }
 
-    for (const { ticker, pattern, candles } of patternRows) {
+    for (const { ticker, pattern, candles } of hsRows) {
       const last = candles[candles.length - 1];
       rows.push({
         user_id: user.id,
@@ -107,7 +105,24 @@ export async function POST(req: Request) {
         strategy: pattern.type === 'HS' ? 'PATTERN_HS' : 'PATTERN_IHS',
         strength: pattern.strength,
         price: last.c,
-        details: patternDetails(pattern),
+        details: hsDetails(pattern),
+        signal_at: new Date(last.t * 1000).toISOString(),
+        status: 'ACTIVE',
+        entry_price: last.c,
+        pattern_data: pattern,
+      });
+    }
+
+    for (const { ticker, pattern, candles } of flagRows) {
+      const last = candles[candles.length - 1];
+      rows.push({
+        user_id: user.id,
+        ticker,
+        strategy:
+          pattern.type === 'BULL_FLAG' ? 'PATTERN_BULL_FLAG' : 'PATTERN_BEAR_FLAG',
+        strength: pattern.strength,
+        price: last.c,
+        details: flagDetails(pattern),
         signal_at: new Date(last.t * 1000).toISOString(),
         status: 'ACTIVE',
         entry_price: last.c,
@@ -120,22 +135,24 @@ export async function POST(req: Request) {
     }
   }
 
-  const combined: ScanCombined = {
-    hmaSignals: hmaSignals.length,
-    patternSignals: patternRows.length,
-  };
-
   return NextResponse.json({
-    count: hmaSignals.length + patternRows.length,
+    count: hmaSignals.length + hsRows.length + flagRows.length,
     scanned: universe.length,
     elapsedMs: elapsed,
-    combined,
+    combined: {
+      hmaSignals: hmaSignals.length,
+      hsPatterns: hsRows.length,
+      flagPatterns: flagRows.length,
+    },
     signals: hmaSignals,
-    patterns: patternRows.map((r) => ({ ticker: r.ticker, ...r.pattern })),
+    patterns: [
+      ...hsRows.map((r) => ({ ticker: r.ticker, ...r.pattern })),
+      ...flagRows.map((r) => ({ ticker: r.ticker, ...r.pattern })),
+    ],
   });
 }
 
-function patternDetails(p: HSPattern): string {
+function hsDetails(p: HSPattern): string {
   const name = p.type === 'HS' ? 'Testa e Spalle' : 'Inv. Testa e Spalle';
   const dir = p.direction === 'down' ? '↓ ribassista' : '↑ rialzista';
   const conf = `conf ${(p.confidence * 100).toFixed(0)}%`;
@@ -144,4 +161,16 @@ function patternDetails(p: HSPattern): string {
       ? `breakout ${p.breakoutBarsAgo}d fa`
       : 'in attesa breakout';
   return `${name} · ${dir} · ${conf} · ${status}`;
+}
+
+function flagDetails(p: FlagPattern): string {
+  const name = p.type === 'BULL_FLAG' ? 'Bull Flag' : 'Bear Flag';
+  const dir = p.direction === 'up' ? '↑ rialzista' : '↓ ribassista';
+  const pole = `pole ${p.poleChangePct >= 0 ? '+' : ''}${p.poleChangePct.toFixed(1)}%`;
+  const conf = `conf ${(p.confidence * 100).toFixed(0)}%`;
+  const status =
+    p.breakoutConfirmed && p.breakoutBarsAgo != null
+      ? `breakout ${p.breakoutBarsAgo}d fa`
+      : 'in attesa breakout';
+  return `${name} · ${dir} · ${pole} · ${conf} · ${status}`;
 }

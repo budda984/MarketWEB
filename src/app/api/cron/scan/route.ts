@@ -2,7 +2,12 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { yahooDownloadMany } from '@/lib/yahoo';
 import { scanTickers } from '@/lib/signals';
-import { detectHeadAndShoulders, type HSPattern } from '@/lib/patterns';
+import {
+  detectHeadAndShoulders,
+  detectFlags,
+  type HSPattern,
+  type FlagPattern,
+} from '@/lib/patterns';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
 import { sendTelegramMessage, formatSignalsDigest } from '@/lib/telegram';
 
@@ -10,10 +15,6 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-/**
- * GET /api/cron/scan
- * Cron schedulato. Scansiona HMA+HA e H&S/IHS su tutti i mercati.
- */
 export async function GET(req: Request) {
   const auth = req.headers.get('authorization');
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -39,7 +40,8 @@ export async function GET(req: Request) {
 
   let totalScanned = 0;
   let totalSignals = 0;
-  let totalPatterns = 0;
+  let totalHsPatterns = 0;
+  let totalFlagPatterns = 0;
   let errors = 0;
 
   const allHmaSignals: Array<{
@@ -56,9 +58,17 @@ export async function GET(req: Request) {
     market: string;
   }> = [];
 
-  const allPatterns: Array<{
+  const allHsPatterns: Array<{
     ticker: string;
     pattern: HSPattern;
+    market: string;
+    timestamp: number;
+    details: string;
+  }> = [];
+
+  const allFlagPatterns: Array<{
+    ticker: string;
+    pattern: FlagPattern;
     market: string;
     timestamp: number;
     details: string;
@@ -96,19 +106,32 @@ export async function GET(req: Request) {
         });
       }
 
-      // Pattern detection sullo stesso dataset
       for (const [ticker, candlesArr] of Object.entries(candles)) {
         if (candlesArr.length < 60) continue;
-        const patterns = detectHeadAndShoulders(candlesArr);
-        for (const p of patterns) {
+
+        const hsPatterns = detectHeadAndShoulders(candlesArr);
+        for (const p of hsPatterns) {
           if (p.strength < 2) continue;
-          totalPatterns++;
-          allPatterns.push({
+          totalHsPatterns++;
+          allHsPatterns.push({
             ticker,
             pattern: p,
             market,
             timestamp: candlesArr[candlesArr.length - 1].t,
-            details: patternDetails(p),
+            details: hsDetails(p),
+          });
+        }
+
+        const flags = detectFlags(candlesArr);
+        for (const p of flags) {
+          if (p.strength < 2) continue;
+          totalFlagPatterns++;
+          allFlagPatterns.push({
+            ticker,
+            pattern: p,
+            market,
+            timestamp: candlesArr[candlesArr.length - 1].t,
+            details: flagDetails(p),
           });
         }
       }
@@ -119,9 +142,8 @@ export async function GET(req: Request) {
     }
   }
 
-  // Salva tutto come segnali pubblici (user_id null)
+  // Salva
   const rows: unknown[] = [];
-
   for (const s of allHmaSignals) {
     rows.push({
       user_id: null,
@@ -141,12 +163,27 @@ export async function GET(req: Request) {
       market: s.market,
     });
   }
-
-  for (const p of allPatterns) {
+  for (const p of allHsPatterns) {
     rows.push({
       user_id: null,
       ticker: p.ticker,
       strategy: p.pattern.type === 'HS' ? 'PATTERN_HS' : 'PATTERN_IHS',
+      strength: p.pattern.strength,
+      price: p.pattern.lastPrice,
+      details: p.details,
+      signal_at: new Date(p.timestamp * 1000).toISOString(),
+      status: 'ACTIVE',
+      entry_price: p.pattern.lastPrice,
+      market: p.market,
+      pattern_data: p.pattern,
+    });
+  }
+  for (const p of allFlagPatterns) {
+    rows.push({
+      user_id: null,
+      ticker: p.ticker,
+      strategy:
+        p.pattern.type === 'BULL_FLAG' ? 'PATTERN_BULL_FLAG' : 'PATTERN_BEAR_FLAG',
       strength: p.pattern.strength,
       price: p.pattern.lastPrice,
       details: p.details,
@@ -163,9 +200,10 @@ export async function GET(req: Request) {
     if (error) errors++;
   }
 
-  // Telegram per ogni utente configurato
+  // Telegram
   let telegramSent = 0;
-  if (allHmaSignals.length > 0 || allPatterns.length > 0) {
+  const totalPatterns = allHsPatterns.length + allFlagPatterns.length;
+  if (allHmaSignals.length > 0 || totalPatterns > 0) {
     const { data: userSettings } = await admin
       .from('user_settings')
       .select('user_id, telegram_bot_token, telegram_chat_id, min_strength')
@@ -176,10 +214,18 @@ export async function GET(req: Request) {
       const tasks = userSettings.map(async (s) => {
         const minStr = s.min_strength ?? 1;
         const hmaFiltered = allHmaSignals.filter((x) => x.strength >= minStr);
-        const patternFiltered = allPatterns.filter(
+        const hsFiltered = allHsPatterns.filter(
           (x) => x.pattern.strength >= minStr
         );
-        if (hmaFiltered.length === 0 && patternFiltered.length === 0) {
+        const flagFiltered = allFlagPatterns.filter(
+          (x) => x.pattern.strength >= minStr
+        );
+
+        if (
+          hmaFiltered.length === 0 &&
+          hsFiltered.length === 0 &&
+          flagFiltered.length === 0
+        ) {
           return false;
         }
 
@@ -187,8 +233,8 @@ export async function GET(req: Request) {
         if (hmaFiltered.length > 0) {
           parts.push(formatSignalsDigest(hmaFiltered));
         }
-        if (patternFiltered.length > 0) {
-          parts.push(formatPatternDigest(patternFiltered));
+        if (hsFiltered.length > 0 || flagFiltered.length > 0) {
+          parts.push(formatPatternDigest(hsFiltered, flagFiltered));
         }
 
         return sendTelegramMessage({
@@ -219,6 +265,8 @@ export async function GET(req: Request) {
     elapsedMs: Date.now() - t0,
     scanned: totalScanned,
     hmaSignals: totalSignals,
+    hsPatterns: totalHsPatterns,
+    flagPatterns: totalFlagPatterns,
     patterns: totalPatterns,
     errors,
     marketsCompleted,
@@ -227,7 +275,7 @@ export async function GET(req: Request) {
   });
 }
 
-function patternDetails(p: HSPattern): string {
+function hsDetails(p: HSPattern): string {
   const name = p.type === 'HS' ? 'Testa e Spalle' : 'Inv. Testa e Spalle';
   const dir = p.direction === 'down' ? '↓ ribassista' : '↑ rialzista';
   const conf = `conf ${(p.confidence * 100).toFixed(0)}%`;
@@ -238,37 +286,76 @@ function patternDetails(p: HSPattern): string {
   return `${name} · ${dir} · ${conf} · ${status}`;
 }
 
+function flagDetails(p: FlagPattern): string {
+  const name = p.type === 'BULL_FLAG' ? 'Bull Flag' : 'Bear Flag';
+  const dir = p.direction === 'up' ? '↑ rialzista' : '↓ ribassista';
+  const pole = `pole ${p.poleChangePct >= 0 ? '+' : ''}${p.poleChangePct.toFixed(1)}%`;
+  const conf = `conf ${(p.confidence * 100).toFixed(0)}%`;
+  const status =
+    p.breakoutConfirmed && p.breakoutBarsAgo != null
+      ? `breakout ${p.breakoutBarsAgo}d fa`
+      : 'in attesa breakout';
+  return `${name} · ${dir} · ${pole} · ${conf} · ${status}`;
+}
+
 function formatPatternDigest(
-  patterns: Array<{
-    ticker: string;
-    pattern: HSPattern;
-    details: string;
-  }>
+  hs: Array<{ ticker: string; pattern: HSPattern }>,
+  flags: Array<{ ticker: string; pattern: FlagPattern }>
 ): string {
-  const breakouts = patterns.filter((p) => p.pattern.strength === 3);
-  const forming = patterns.filter((p) => p.pattern.strength === 2);
+  const breakouts = [
+    ...hs.filter((p) => p.pattern.strength === 3).map((p) => ({
+      ticker: p.ticker,
+      name: p.pattern.type === 'HS' ? 'H&S' : 'Inv.H&S',
+      icon: p.pattern.type === 'HS' ? '📉' : '📈',
+      price: p.pattern.lastPrice,
+      target: p.pattern.target,
+      level: p.pattern.breakoutLevel,
+      conf: p.pattern.confidence,
+    })),
+    ...flags.filter((p) => p.pattern.strength === 3).map((p) => ({
+      ticker: p.ticker,
+      name: p.pattern.type === 'BULL_FLAG' ? 'Bull Flag' : 'Bear Flag',
+      icon: p.pattern.type === 'BULL_FLAG' ? '🚩' : '🏳',
+      price: p.pattern.lastPrice,
+      target: p.pattern.target,
+      level: p.pattern.breakoutLevel,
+      conf: p.pattern.confidence,
+    })),
+  ];
+  const forming = [
+    ...hs.filter((p) => p.pattern.strength === 2).map((p) => ({
+      ticker: p.ticker,
+      name: p.pattern.type === 'HS' ? 'H&S' : 'Inv.H&S',
+      icon: p.pattern.type === 'HS' ? '📉' : '📈',
+      level: p.pattern.breakoutLevel,
+      conf: p.pattern.confidence,
+    })),
+    ...flags.filter((p) => p.pattern.strength === 2).map((p) => ({
+      ticker: p.ticker,
+      name: p.pattern.type === 'BULL_FLAG' ? 'Bull Flag' : 'Bear Flag',
+      icon: p.pattern.type === 'BULL_FLAG' ? '🚩' : '🏳',
+      level: p.pattern.breakoutLevel,
+      conf: p.pattern.confidence,
+    })),
+  ];
 
   const lines: string[] = ['*🎯 Pattern Radar*\n'];
 
   if (breakouts.length > 0) {
     lines.push(`🚨 *BREAKOUT* (${breakouts.length})`);
-    for (const p of breakouts.slice(0, 10)) {
-      const icon = p.pattern.type === 'HS' ? '📉' : '📈';
-      const target = p.pattern.target.toFixed(2);
+    for (const p of breakouts.slice(0, 15)) {
       lines.push(
-        `  ${icon} \`${p.ticker}\` @ $${p.pattern.lastPrice.toFixed(2)} → target $${target}`
+        `  ${p.icon} \`${p.ticker}\` ${p.name} @ $${p.price.toFixed(2)} → $${p.target.toFixed(2)}`
       );
     }
     lines.push('');
   }
 
   if (forming.length > 0) {
-    lines.push(`⏳ *In attesa breakout* (${forming.length})`);
-    for (const p of forming.slice(0, 8)) {
-      const icon = p.pattern.type === 'HS' ? '📉' : '📈';
-      const level = p.pattern.breakoutLevel.toFixed(2);
+    lines.push(`⏳ *In attesa* (${forming.length})`);
+    for (const p of forming.slice(0, 10)) {
       lines.push(
-        `  ${icon} \`${p.ticker}\` neckline $${level} (conf ${(p.pattern.confidence * 100).toFixed(0)}%)`
+        `  ${p.icon} \`${p.ticker}\` ${p.name} lvl $${p.level.toFixed(2)} (${(p.conf * 100).toFixed(0)}%)`
       );
     }
   }

@@ -282,3 +282,276 @@ export function detectHeadAndShoulders(
 
   return deduped;
 }
+
+// ============================================================================
+// FLAG PATTERN (Bull / Bear) — Fase 2
+// ============================================================================
+/**
+ * Flag: pattern di continuazione in due fasi.
+ *  1. POLE: movimento direzionale forte, ≥10% in 3-8 candele, basso pullback
+ *  2. FLAG: consolidamento subito dopo il pole, 5-15 candele, canale
+ *     lievemente contrario al pole (retracement ≤50% del pole)
+ *  3. BREAKOUT: close oltre la trendline superiore del canale (bull)
+ *     o inferiore (bear), nella direzione del pole
+ *
+ * Parametri rigorosi:
+ *  - Pole: min 10% di movimento, 3-8 candele, pullback interno ≤30% del move
+ *  - Flag: 5-15 candele, retracement totale ≤50% del pole
+ *  - Canale: slope contraria al pole, con tolleranza
+ *  - Confidence minima: 0.7
+ *
+ * Strength:
+ *  - 3 = breakout confermato (close oltre canale ≤ 2 candele fa)
+ *  - 2 = flag formata, in attesa breakout
+ */
+
+export type FlagPattern = {
+  type: 'BULL_FLAG' | 'BEAR_FLAG';
+  startIdx: number; // inizio pole
+  poleEndIdx: number; // fine pole = inizio flag
+  endIdx: number; // fine flag
+  poleStartPrice: number;
+  poleEndPrice: number;
+  poleChangePct: number;
+  flagHighSlope: number;
+  flagLowSlope: number;
+  flagHighAtLastBar: number;
+  flagLowAtLastBar: number;
+  breakoutLevel: number;
+  breakoutConfirmed: boolean;
+  breakoutBarsAgo: number | null;
+  confidence: number;
+  target: number;
+  stopLoss: number;
+  strength: 1 | 2 | 3;
+  lastPrice: number;
+  direction: 'up' | 'down';
+};
+
+type FlagOpts = {
+  poleMinMove?: number; // es. 0.10 = 10%
+  poleMinBars?: number;
+  poleMaxBars?: number;
+  poleMaxPullback?: number; // retracement interno massimo (frazione)
+  flagMinBars?: number;
+  flagMaxBars?: number;
+  flagMaxRetracement?: number; // frazione del pole che la flag può riprendere
+  breakoutWindow?: number;
+  minConfidence?: number;
+};
+
+const DEFAULT_FLAG: Required<FlagOpts> = {
+  poleMinMove: 0.10,
+  poleMinBars: 3,
+  poleMaxBars: 8,
+  poleMaxPullback: 0.30,
+  flagMinBars: 5,
+  flagMaxBars: 15,
+  flagMaxRetracement: 0.50,
+  breakoutWindow: 3,
+  minConfidence: 0.7,
+};
+
+/**
+ * Linear regression sui prezzi y con indici x.
+ * Torna slope e intercept.
+ */
+function linreg(x: number[], y: number[]): { slope: number; intercept: number; r2: number } {
+  const n = x.length;
+  if (n < 2) return { slope: 0, intercept: y[0] ?? 0, r2: 0 };
+  const meanX = x.reduce((s, v) => s + v, 0) / n;
+  const meanY = y.reduce((s, v) => s + v, 0) / n;
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (x[i] - meanX) * (y[i] - meanY);
+    den += (x[i] - meanX) ** 2;
+  }
+  const slope = den === 0 ? 0 : num / den;
+  const intercept = meanY - slope * meanX;
+
+  // R²
+  let ssRes = 0;
+  let ssTot = 0;
+  for (let i = 0; i < n; i++) {
+    const pred = slope * x[i] + intercept;
+    ssRes += (y[i] - pred) ** 2;
+    ssTot += (y[i] - meanY) ** 2;
+  }
+  const r2 = ssTot === 0 ? 0 : 1 - ssRes / ssTot;
+  return { slope, intercept, r2 };
+}
+
+/**
+ * Detection Flag (bull e bear).
+ */
+export function detectFlags(
+  candles: OHLCV[],
+  userOpts: FlagOpts = {}
+): FlagPattern[] {
+  const opts = { ...DEFAULT_FLAG, ...userOpts };
+  if (candles.length < opts.poleMaxBars + opts.flagMaxBars + 5) return [];
+
+  const out: FlagPattern[] = [];
+  const lastIdx = candles.length - 1;
+  const lastPrice = candles[lastIdx].c;
+
+  // Scorri all'indietro: per ogni possibile fine-flag, cerca un pole che la precede
+  // Per efficienza, valuto solo flag che finiscono nelle ultime 30 candele
+  const searchFrom = Math.max(opts.poleMaxBars + opts.flagMinBars, lastIdx - 30);
+
+  for (let flagEnd = searchFrom; flagEnd <= lastIdx; flagEnd++) {
+    for (let flagLen = opts.flagMinBars; flagLen <= opts.flagMaxBars; flagLen++) {
+      const flagStart = flagEnd - flagLen + 1;
+      if (flagStart < opts.poleMaxBars) continue;
+
+      for (let poleLen = opts.poleMinBars; poleLen <= opts.poleMaxBars; poleLen++) {
+        const poleStart = flagStart - poleLen;
+        if (poleStart < 0) continue;
+        const poleEnd = flagStart - 1;
+        if (poleEnd < 0) continue;
+
+        const pStart = candles[poleStart].c;
+        const pEnd = candles[poleEnd].c;
+        const move = (pEnd - pStart) / pStart;
+
+        // Serve un movimento abbastanza grande
+        if (Math.abs(move) < opts.poleMinMove) continue;
+        const isBull = move > 0;
+
+        // Pullback interno del pole
+        let internalRetr = 0;
+        if (isBull) {
+          let maxSoFar = pStart;
+          for (let i = poleStart; i <= poleEnd; i++) {
+            const c = candles[i].c;
+            if (c > maxSoFar) maxSoFar = c;
+            const drawdown = (maxSoFar - candles[i].l) / (pEnd - pStart);
+            if (drawdown > internalRetr) internalRetr = drawdown;
+          }
+        } else {
+          let minSoFar = pStart;
+          for (let i = poleStart; i <= poleEnd; i++) {
+            const c = candles[i].c;
+            if (c < minSoFar) minSoFar = c;
+            const rally = (candles[i].h - minSoFar) / (pStart - pEnd);
+            if (rally > internalRetr) internalRetr = rally;
+          }
+        }
+        if (internalRetr > opts.poleMaxPullback) continue;
+
+        // Flag: calcolo trendline su high e low
+        const xs: number[] = [];
+        const flagHighs: number[] = [];
+        const flagLows: number[] = [];
+        for (let i = flagStart; i <= flagEnd; i++) {
+          xs.push(i);
+          flagHighs.push(candles[i].h);
+          flagLows.push(candles[i].l);
+        }
+        const regHigh = linreg(xs, flagHighs);
+        const regLow = linreg(xs, flagLows);
+
+        // Il canale della flag deve andare in direzione opposta al pole (o laterale)
+        // Per bull flag: high slope ≤0 (o leggermente positiva), low slope ≤0
+        // Per bear flag: opposto
+        if (isBull && (regHigh.slope > 0.3 * (pEnd - pStart) / poleLen)) continue;
+        if (!isBull && (regLow.slope < -0.3 * (pStart - pEnd) / poleLen)) continue;
+
+        // Retracement della flag rispetto al pole
+        let flagExtreme: number;
+        if (isBull) {
+          flagExtreme = Math.min(...flagLows);
+          const flagRetr = (pEnd - flagExtreme) / (pEnd - pStart);
+          if (flagRetr > opts.flagMaxRetracement || flagRetr < 0) continue;
+        } else {
+          flagExtreme = Math.max(...flagHighs);
+          const flagRetr = (flagExtreme - pEnd) / (pStart - pEnd);
+          if (flagRetr > opts.flagMaxRetracement || flagRetr < 0) continue;
+        }
+
+        // Qualità del fit: i prezzi devono seguire le trendline (R² alto)
+        const fitQuality = (regHigh.r2 + regLow.r2) / 2;
+
+        // Confidence: combinazione di movimento del pole, basso pullback, buon fit
+        const moveStrength = Math.min(1, Math.abs(move) / 0.20);
+        const pullbackQuality = 1 - internalRetr / opts.poleMaxPullback;
+        const confidence = moveStrength * 0.3 + pullbackQuality * 0.3 + fitQuality * 0.4;
+        if (confidence < opts.minConfidence) continue;
+
+        // Breakout?
+        const highAtLast = regHigh.slope * lastIdx + regHigh.intercept;
+        const lowAtLast = regLow.slope * lastIdx + regLow.intercept;
+        const breakoutLevel = isBull ? highAtLast : lowAtLast;
+
+        let breakoutBarsAgo: number | null = null;
+        const maxK = Math.min(opts.breakoutWindow, lastIdx - flagEnd);
+        for (let k = 0; k <= maxK; k++) {
+          const barIdx = lastIdx - k;
+          if (barIdx <= flagEnd) break;
+          const bar = candles[barIdx];
+          const channelHigh = regHigh.slope * barIdx + regHigh.intercept;
+          const channelLow = regLow.slope * barIdx + regLow.intercept;
+          if (isBull && bar.c > channelHigh) {
+            breakoutBarsAgo = k;
+            break;
+          }
+          if (!isBull && bar.c < channelLow) {
+            breakoutBarsAgo = k;
+            break;
+          }
+        }
+
+        let strength: 1 | 2 | 3 = 2;
+        if (breakoutBarsAgo !== null && breakoutBarsAgo <= 2) strength = 3;
+
+        // Target = entry + lunghezza del pole (nella direzione)
+        const poleMagnitude = Math.abs(pEnd - pStart);
+        const target = isBull
+          ? breakoutLevel + poleMagnitude
+          : breakoutLevel - poleMagnitude;
+        const stopLoss = isBull ? flagExtreme * 0.995 : flagExtreme * 1.005;
+
+        out.push({
+          type: isBull ? 'BULL_FLAG' : 'BEAR_FLAG',
+          startIdx: poleStart,
+          poleEndIdx: poleEnd,
+          endIdx: flagEnd,
+          poleStartPrice: pStart,
+          poleEndPrice: pEnd,
+          poleChangePct: move * 100,
+          flagHighSlope: regHigh.slope,
+          flagLowSlope: regLow.slope,
+          flagHighAtLastBar: highAtLast,
+          flagLowAtLastBar: lowAtLast,
+          breakoutLevel,
+          breakoutConfirmed: breakoutBarsAgo !== null,
+          breakoutBarsAgo,
+          confidence,
+          target,
+          stopLoss,
+          strength,
+          lastPrice,
+          direction: isBull ? 'up' : 'down',
+        });
+
+        // Prendo il primo match per questo poleStart, poi rompo i cicli interni
+        break;
+      }
+    }
+  }
+
+  // Dedup: per lo stesso range mantengo solo il più confidente
+  out.sort((a, b) => b.confidence - a.confidence);
+  const deduped: FlagPattern[] = [];
+  const used: Array<[number, number]> = [];
+  for (const p of out) {
+    const overlap = used.some(([s, e]) => p.startIdx < e && p.endIdx > s);
+    if (!overlap) {
+      deduped.push(p);
+      used.push([p.startIdx, p.endIdx]);
+    }
+  }
+
+  return deduped;
+}
