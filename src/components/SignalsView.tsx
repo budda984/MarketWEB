@@ -353,7 +353,7 @@ function SignalRow({
       </div>
       <div className="text-right flex-shrink-0">
         <div className="font-mono font-bold text-sm sm:text-base">
-          {signal.price.toFixed(2)}
+          {fmt(signal.price)}
         </div>
         <div
           className={`text-xs font-mono ${
@@ -487,7 +487,7 @@ function PatternRow({
       </div>
       <div className="text-right flex-shrink-0">
         <div className="font-mono font-bold text-sm sm:text-base">
-          {signal.price.toFixed(2)}
+          {fmt(signal.price)}
         </div>
         <div className="text-xs text-brand-muted">last</div>
       </div>
@@ -529,4 +529,10 @@ function FilterBtn({
       {label}
     </button>
   );
+}
+
+/** Format sicuro: accetta null/undefined e torna '—' se non numerico */
+function fmt(v: number | null | undefined, digits = 2): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return v.toFixed(digits);
 }
