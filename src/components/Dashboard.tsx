@@ -44,7 +44,7 @@ export default function Dashboard({
     'S&P 500',
     'NASDAQ',
     'Crypto',
-    'Italia',
+    'Europa',
   ]);
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
@@ -132,10 +132,17 @@ export default function Dashboard({
   };
 
   const stats = useMemo(() => {
-    const forti = signals.filter((s) => s.strength === 3).length;
-    const medi = signals.filter((s) => s.strength === 2).length;
-    const deboli = signals.filter((s) => s.strength === 1).length;
-    return { forti, medi, deboli, tot: signals.length };
+    // Dedup stesso dell'UI: conta ogni coppia (ticker, strategy) solo una volta
+    const seen = new Map<string, DbSignal>();
+    for (const s of signals) {
+      const key = `${s.ticker}|${s.strategy}`;
+      if (!seen.has(key)) seen.set(key, s);
+    }
+    const deduped = Array.from(seen.values());
+    const forti = deduped.filter((s) => s.strength === 3).length;
+    const medi = deduped.filter((s) => s.strength === 2).length;
+    const deboli = deduped.filter((s) => s.strength === 1).length;
+    return { forti, medi, deboli, tot: deduped.length };
   }, [signals]);
 
   const sidebarContent = (

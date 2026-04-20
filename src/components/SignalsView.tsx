@@ -51,7 +51,17 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
-    return signals.filter((s) => {
+    // Dedup: per ogni coppia (ticker, strategy) tengo solo il segnale più
+    // recente. I segnali arrivano già ordinati per data desc (+ tie-break
+    // su strength), quindi il primo visto è il più recente.
+    const seen = new Map<string, DbSignal>();
+    for (const s of signals) {
+      const key = `${s.ticker}|${s.strategy}`;
+      if (!seen.has(key)) seen.set(key, s);
+    }
+    const deduped = Array.from(seen.values());
+
+    return deduped.filter((s) => {
       if (strength !== 'all' && s.strength !== Number(strength)) return false;
       if (status !== 'all' && s.status !== status) return false;
       if (strategy !== 'all') {

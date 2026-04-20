@@ -222,7 +222,15 @@ export async function GET(req: Request) {
   }
 
   if (rows.length > 0) {
-    const { error } = await admin.from('signals').insert(rows);
+    // UPSERT: se (user_id, ticker, strategy) esiste già, aggiorna invece di
+    // creare un nuovo record. Così evitiamo duplicati quando il cron gira
+    // più volte nello stesso giorno.
+    const { error } = await admin
+      .from('signals')
+      .upsert(rows, {
+        onConflict: 'user_id,ticker,strategy',
+        ignoreDuplicates: false,
+      });
     if (error) errors++;
   }
 
