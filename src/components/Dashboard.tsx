@@ -43,7 +43,7 @@ export default function Dashboard({
     'S&P 500',
     'NASDAQ',
     'Crypto',
-    'Italia',
+    'Europa',
   ]);
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
@@ -139,7 +139,8 @@ export default function Dashboard({
 
   const sidebarContent = (
     <>
-      <div className="p-4 border-b border-brand-border">
+      {/* HEADER fisso */}
+      <div className="p-4 border-b border-brand-border flex-shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-brand-green flex items-center justify-center flex-shrink-0">
             <TrendingUp className="w-4 h-4 text-black" />
@@ -160,98 +161,102 @@ export default function Dashboard({
         </div>
       </div>
 
-      <nav className="p-2 space-y-1">
-        <NavButton
-          active={view === 'signals'}
-          onClick={() => setView('signals')}
-          icon={<Activity className="w-4 h-4" />}
-          label="Segnali"
-          badge={stats.tot}
-        />
-        <NavButton
-          active={view === 'chart'}
-          onClick={() => setView('chart')}
-          icon={<LineChart className="w-4 h-4" />}
-          label="Chart"
-        />
-        <NavButton
-          active={view === 'backtest'}
-          onClick={() => setView('backtest')}
-          icon={<Zap className="w-4 h-4" />}
-          label="Backtest"
-        />
-        <NavButton
-          active={view === 'settings'}
-          onClick={() => setView('settings')}
-          icon={<Settings className="w-4 h-4" />}
-          label="Settings"
-        />
-      </nav>
+      {/* AREA SCROLLABILE (nav + mercati + scan + watchlist) */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        <nav className="p-2 space-y-1">
+          <NavButton
+            active={view === 'signals'}
+            onClick={() => setView('signals')}
+            icon={<Activity className="w-4 h-4" />}
+            label="Segnali"
+            badge={stats.tot}
+          />
+          <NavButton
+            active={view === 'chart'}
+            onClick={() => setView('chart')}
+            icon={<LineChart className="w-4 h-4" />}
+            label="Chart"
+          />
+          <NavButton
+            active={view === 'backtest'}
+            onClick={() => setView('backtest')}
+            icon={<Zap className="w-4 h-4" />}
+            label="Backtest"
+          />
+          <NavButton
+            active={view === 'settings'}
+            onClick={() => setView('settings')}
+            icon={<Settings className="w-4 h-4" />}
+            label="Settings"
+          />
+        </nav>
 
-      <div className="px-4 py-2 text-xs font-semibold text-brand-muted uppercase tracking-wide mt-2">
-        Scan mercati
-      </div>
-      <div className="px-2 space-y-1">
-        {(Object.keys(MARKETS) as MarketKey[]).map((m) => {
-          const on = selectedMarkets.includes(m);
-          return (
-            <button
-              key={m}
-              onClick={() =>
-                setSelectedMarkets((prev) =>
-                  prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]
-                )
-              }
-              className={`w-full flex items-center justify-between px-3 py-1.5 rounded text-sm transition ${
-                on
-                  ? 'bg-brand-green/15 text-brand-green'
-                  : 'text-brand-muted hover:bg-brand-card'
-              }`}
-            >
-              <span>{m}</span>
-              <span className="text-xs font-mono">{MARKETS[m].length}</span>
-            </button>
-          );
-        })}
-      </div>
+        <div className="px-4 py-2 text-xs font-semibold text-brand-muted uppercase tracking-wide mt-2">
+          Scan mercati
+        </div>
+        <div className="px-2 space-y-1">
+          {(Object.keys(MARKETS) as MarketKey[]).map((m) => {
+            const on = selectedMarkets.includes(m);
+            return (
+              <button
+                key={m}
+                onClick={() =>
+                  setSelectedMarkets((prev) =>
+                    prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]
+                  )
+                }
+                className={`w-full flex items-center justify-between px-3 py-1.5 rounded text-sm transition ${
+                  on
+                    ? 'bg-brand-green/15 text-brand-green'
+                    : 'text-brand-muted hover:bg-brand-card'
+                }`}
+              >
+                <span>{m}</span>
+                <span className="text-xs font-mono">{MARKETS[m].length}</span>
+              </button>
+            );
+          })}
+        </div>
 
-      <div className="p-3 mt-2">
-        <button
-          onClick={handleScan}
-          disabled={scanning || selectedMarkets.length === 0}
-          className="btn-primary w-full justify-center disabled:opacity-50"
-        >
-          {scanning ? (
-            <RefreshCw className="w-4 h-4 animate-spin" />
-          ) : (
-            <Scan className="w-4 h-4" />
-          )}
-          {scanning ? 'Scansione…' : 'Scansiona ora'}
-        </button>
-        {scanMsg && <p className="text-xs mt-2 text-brand-muted">{scanMsg}</p>}
-      </div>
-
-      <div className="px-4 pb-2 text-xs font-semibold text-brand-muted uppercase tracking-wide mt-2">
-        Watchlist
-      </div>
-      <div className="px-2 space-y-1 overflow-y-auto flex-1 min-h-0">
-        {watchlists.length === 0 && (
-          <p className="text-xs text-brand-muted px-3">Nessuna watchlist</p>
-        )}
-        {watchlists.map((w) => (
-          <div
-            key={w.id}
-            className="px-3 py-1.5 text-sm text-brand-muted hover:bg-brand-card rounded flex items-center justify-between"
+        <div className="p-3 mt-2">
+          <button
+            onClick={handleScan}
+            disabled={scanning || selectedMarkets.length === 0}
+            className="btn-primary w-full justify-center disabled:opacity-50"
           >
-            <span className="truncate">{w.name}</span>
-            <span className="text-xs font-mono flex-shrink-0 ml-2">
-              {w.tickers.length}
-            </span>
-          </div>
-        ))}
+            {scanning ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <Scan className="w-4 h-4" />
+            )}
+            {scanning ? 'Scansione…' : 'Scansiona ora'}
+          </button>
+          {scanMsg && <p className="text-xs mt-2 text-brand-muted">{scanMsg}</p>}
+        </div>
+
+        <div className="px-4 pb-2 text-xs font-semibold text-brand-muted uppercase tracking-wide mt-2">
+          Watchlist
+        </div>
+        <div className="px-2 space-y-1 pb-2">
+          {watchlists.length === 0 && (
+            <p className="text-xs text-brand-muted px-3">Nessuna watchlist</p>
+          )}
+          {watchlists.map((w) => (
+            <div
+              key={w.id}
+              className="px-3 py-1.5 text-sm text-brand-muted hover:bg-brand-card rounded flex items-center justify-between"
+            >
+              <span className="truncate">{w.name}</span>
+              <span className="text-xs font-mono flex-shrink-0 ml-2">
+                {w.tickers.length}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div className="p-3 border-t border-brand-border">
+      {/* FOOTER fisso */}
+      <div className="p-3 border-t border-brand-border flex-shrink-0">
         <div className="text-xs text-brand-muted truncate mb-2">{userEmail}</div>
         <button onClick={signOut} className="btn-ghost w-full justify-center">
           <LogOut className="w-4 h-4" /> Esci
