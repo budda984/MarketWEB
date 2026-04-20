@@ -18,6 +18,7 @@ export type DbSignal = {
   exit_at: string | null;
   pnl_percent: number | null;
   market: string | null;
+  pattern_data: unknown | null;
 };
 
 export type DbWatchlist = {
