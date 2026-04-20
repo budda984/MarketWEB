@@ -13,8 +13,6 @@ import {
 } from 'recharts';
 import {
   Search,
-  ChevronLeft,
-  ChevronRight,
   LineChart as LineChartIcon,
   CandlestickChart,
 } from 'lucide-react';
@@ -67,24 +65,6 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
     };
   }, [ticker]);
 
-  // Navigazione: se il browseMarket è selezionato, calcolo indice del ticker corrente
-  const { browseIndex, browseTotal, browsePrev, browseNext } = useMemo(() => {
-    if (browseMarket === 'none') {
-      return { browseIndex: -1, browseTotal: 0, browsePrev: null, browseNext: null };
-    }
-    const list = MARKETS[browseMarket] as readonly string[];
-    const idx = list.indexOf(ticker);
-    const total = list.length;
-    const prev = idx > 0 ? list[idx - 1] : list[total - 1]; // wrap
-    const next = idx < total - 1 ? list[idx + 1] : list[0]; // wrap
-    return {
-      browseIndex: idx,
-      browseTotal: total,
-      browsePrev: prev,
-      browseNext: next,
-    };
-  }, [browseMarket, ticker]);
-
   const { candleRows, haRows } = useMemo(() => {
     if (!data?.candles?.length) return { candleRows: [], haRows: [] };
     const closes = data.candles.map((c) => c.c);
@@ -133,11 +113,11 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
         </div>
 
         {onTickerChange && (
-          <div className="flex items-center gap-1 flex-shrink-0">
+          <div className="flex items-center gap-1 flex-shrink-0 flex-wrap">
             <select
               value={browseMarket}
               onChange={(e) => setBrowseMarket(e.target.value as MarketKey | 'none')}
-              className="input text-xs py-1.5 flex-1 sm:flex-none"
+              className="input text-xs py-1.5"
             >
               <option value="none">Sfoglia mercato…</option>
               {(Object.keys(MARKETS) as MarketKey[]).map((m) => (
@@ -146,26 +126,18 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
                 </option>
               ))}
             </select>
-            {browseMarket !== 'none' && browsePrev && browseNext && (
-              <>
-                <button
-                  onClick={() => onTickerChange(browsePrev)}
-                  className="btn-ghost p-1.5 text-xs"
-                  title="Precedente"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <span className="text-xs font-mono text-brand-muted whitespace-nowrap px-1">
-                  {browseIndex >= 0 ? browseIndex + 1 : '—'}/{browseTotal}
-                </span>
-                <button
-                  onClick={() => onTickerChange(browseNext)}
-                  className="btn-ghost p-1.5 text-xs"
-                  title="Successivo"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </>
+            {browseMarket !== 'none' && (
+              <select
+                value={ticker}
+                onChange={(e) => onTickerChange(e.target.value)}
+                className="input text-xs py-1.5 font-mono max-w-[180px]"
+              >
+                {(MARKETS[browseMarket] as readonly string[]).map((t, i) => (
+                  <option key={t} value={t}>
+                    {i + 1}. {t}
+                  </option>
+                ))}
+              </select>
             )}
           </div>
         )}
