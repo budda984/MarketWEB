@@ -21,6 +21,7 @@ import ChartView from './ChartView';
 import SignalsView from './SignalsView';
 import BacktestView from './BacktestView';
 import SettingsView from './SettingsView';
+import WatchlistPanel from './WatchlistPanel';
 
 type View = 'chart' | 'signals' | 'backtest' | 'settings';
 
@@ -38,12 +39,12 @@ export default function Dashboard({
   const [view, setView] = useState<View>('signals');
   const [selectedTicker, setSelectedTicker] = useState<string>('AAPL');
   const [signals, setSignals] = useState<DbSignal[]>(initialSignals);
-  const [watchlists] = useState<DbWatchlist[]>(initialWatchlists);
+  const [watchlists, setWatchlists] = useState<DbWatchlist[]>(initialWatchlists);
   const [selectedMarkets, setSelectedMarkets] = useState<MarketKey[]>([
     'S&P 500',
     'NASDAQ',
     'Crypto',
-    'Italia',
+    'Europa',
   ]);
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
@@ -237,22 +238,11 @@ export default function Dashboard({
         <div className="px-4 pb-2 text-xs font-semibold text-brand-muted uppercase tracking-wide mt-2">
           Watchlist
         </div>
-        <div className="px-2 space-y-1 pb-2">
-          {watchlists.length === 0 && (
-            <p className="text-xs text-brand-muted px-3">Nessuna watchlist</p>
-          )}
-          {watchlists.map((w) => (
-            <div
-              key={w.id}
-              className="px-3 py-1.5 text-sm text-brand-muted hover:bg-brand-card rounded flex items-center justify-between"
-            >
-              <span className="truncate">{w.name}</span>
-              <span className="text-xs font-mono flex-shrink-0 ml-2">
-                {w.tickers.length}
-              </span>
-            </div>
-          ))}
-        </div>
+        <WatchlistPanel
+          watchlists={watchlists}
+          onChange={setWatchlists}
+          onOpenTicker={onOpenTicker}
+        />
       </div>
 
       {/* FOOTER fisso */}
