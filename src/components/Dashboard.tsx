@@ -43,7 +43,7 @@ export default function Dashboard({
     'S&P 500',
     'NASDAQ',
     'Crypto',
-    'Europa',
+    'Italia',
   ]);
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
