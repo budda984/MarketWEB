@@ -69,6 +69,9 @@ export async function GET(req: Request) {
   const allWedge: Array<{ ticker: string; pattern: WedgePattern; market: string; timestamp: number; details: string }> = [];
   const allCup: Array<{ ticker: string; pattern: CupHandlePattern; market: string; timestamp: number; details: string }> = [];
 
+  // Prezzi correnti per ogni ticker (serve per gli alert)
+  const currentPrices = new Map<string, number>();
+
   const marketsCompleted: string[] = [];
   const marketsSkipped: string[] = [];
 
@@ -105,6 +108,8 @@ export async function GET(req: Request) {
       for (const [ticker, candlesArr] of Object.entries(candles)) {
         if (candlesArr.length < 60) continue;
         const ts = candlesArr[candlesArr.length - 1].t;
+        // Salvo il prezzo corrente per la valutazione alert
+        currentPrices.set(ticker, candlesArr[candlesArr.length - 1].c);
 
         for (const p of detectHeadAndShoulders(candlesArr)) {
           if (p.strength < 2) continue;
@@ -221,10 +226,96 @@ export async function GET(req: Request) {
     if (error) errors++;
   }
 
+  // ============================================================
+  // Valutazione alert di prezzo
+  // ============================================================
+  // Per ogni alert attivo, controllo se il prezzo corrente attraversa la
+  // soglia. Se sì, aggiorno triggered_at + last_price e raccolgo la notifica
+  // da inviare via Telegram.
+  type TriggeredAlert = {
+    userId: string;
+    ticker: string;
+    threshold: number;
+    direction: 'above' | 'below' | 'cross';
+    currentPrice: number;
+    previousPrice: number | null;
+    note: string | null;
+  };
+  const alertsByUser = new Map<string, TriggeredAlert[]>();
+
+  const { data: activeAlerts } = await admin
+    .from('price_alerts')
+    .select('*')
+    .eq('active', true);
+
+  if (activeAlerts && activeAlerts.length > 0) {
+    const alertUpdates: Array<{
+      id: string;
+      last_price: number;
+      triggered_at?: string | null;
+      active?: boolean;
+    }> = [];
+
+    for (const a of activeAlerts) {
+      const price = currentPrices.get(a.ticker);
+      if (price == null) continue; // ticker non scansionato in questo cron
+
+      const prev = a.last_price != null ? Number(a.last_price) : null;
+      const threshold = Number(a.threshold);
+
+      let triggered = false;
+      if (a.direction === 'above') {
+        // scatta solo se passa da <= threshold a > threshold
+        triggered = prev != null && prev <= threshold && price > threshold;
+        // oppure primo check con prezzo già > (senza prev)
+        if (prev == null && price > threshold) triggered = true;
+      } else if (a.direction === 'below') {
+        triggered = prev != null && prev >= threshold && price < threshold;
+        if (prev == null && price < threshold) triggered = true;
+      } else {
+        // cross
+        triggered =
+          prev != null &&
+          ((prev <= threshold && price > threshold) ||
+            (prev >= threshold && price < threshold));
+      }
+
+      const update: typeof alertUpdates[0] = {
+        id: a.id,
+        last_price: price,
+      };
+
+      if (triggered) {
+        update.triggered_at = new Date().toISOString();
+        if (a.one_shot) update.active = false;
+
+        const list = alertsByUser.get(a.user_id) ?? [];
+        list.push({
+          userId: a.user_id,
+          ticker: a.ticker,
+          threshold,
+          direction: a.direction,
+          currentPrice: price,
+          previousPrice: prev,
+          note: a.note,
+        });
+        alertsByUser.set(a.user_id, list);
+      }
+
+      alertUpdates.push(update);
+    }
+
+    // Batch update
+    for (const u of alertUpdates) {
+      await admin.from('price_alerts').update(u).eq('id', u.id);
+    }
+  }
+
   // Telegram
   let telegramSent = 0;
   const totalPatterns = allHs.length + allFlag.length + allWedge.length + allCup.length;
-  if (allHma.length > 0 || totalPatterns > 0) {
+  const hasTriggeredAlerts = alertsByUser.size > 0;
+  if (allHma.length > 0 || totalPatterns > 0 || hasTriggeredAlerts) {
     const { data: userSettings } = await admin
       .from('user_settings')
       .select('user_id, telegram_bot_token, telegram_chat_id, min_strength')
@@ -239,12 +330,24 @@ export async function GET(req: Request) {
         const fl = allFlag.filter((x) => x.pattern.strength >= minStr);
         const we = allWedge.filter((x) => x.pattern.strength >= minStr);
         const cu = allCup.filter((x) => x.pattern.strength >= minStr);
+        const triggeredForUser = alertsByUser.get(s.user_id) ?? [];
 
-        if (hma.length === 0 && hs.length === 0 && fl.length === 0 && we.length === 0 && cu.length === 0) {
+        if (
+          hma.length === 0 &&
+          hs.length === 0 &&
+          fl.length === 0 &&
+          we.length === 0 &&
+          cu.length === 0 &&
+          triggeredForUser.length === 0
+        ) {
           return false;
         }
 
         const parts: string[] = [];
+        // Priorità: alert in cima (sono i più urgenti)
+        if (triggeredForUser.length > 0) {
+          parts.push(formatAlertDigest(triggeredForUser));
+        }
         if (hma.length > 0) parts.push(formatSignalsDigest(hma));
         if (hs.length > 0 || fl.length > 0 || we.length > 0 || cu.length > 0) {
           parts.push(formatPatternDigest(hs, fl, we, cu));
@@ -283,6 +386,10 @@ export async function GET(req: Request) {
     wedgePatterns: totalWedge,
     cupPatterns: totalCup,
     patterns: totalPatterns,
+    alertsTriggered: Array.from(alertsByUser.values()).reduce(
+      (s, arr) => s + arr.length,
+      0
+    ),
     errors,
     marketsCompleted,
     marketsSkipped,
@@ -400,5 +507,33 @@ function formatPatternDigest(
     }
   }
 
+  return lines.join('\n');
+}
+
+function formatAlertDigest(
+  triggered: Array<{
+    ticker: string;
+    threshold: number;
+    direction: 'above' | 'below' | 'cross';
+    currentPrice: number;
+    previousPrice: number | null;
+    note: string | null;
+  }>
+): string {
+  const lines: string[] = ['🚨 *AVVISI DI PREZZO*\n'];
+  for (const a of triggered) {
+    const arrow =
+      a.previousPrice != null && a.currentPrice > a.previousPrice
+        ? '↗'
+        : a.previousPrice != null && a.currentPrice < a.previousPrice
+          ? '↘'
+          : '•';
+    const dirIcon =
+      a.direction === 'above' ? '↑' : a.direction === 'below' ? '↓' : '⇅';
+    const noteStr = a.note ? ` _(${a.note})_` : '';
+    lines.push(
+      `  ${arrow} \`${a.ticker}\` ${dirIcon} soglia $${a.threshold.toFixed(2)} → prezzo $${a.currentPrice.toFixed(2)}${noteStr}`
+    );
+  }
   return lines.join('\n');
 }

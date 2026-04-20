@@ -615,11 +615,11 @@ type WedgeOpts = {
 const DEFAULT_WEDGE: Required<WedgeOpts> = {
   leftBars: 5,
   rightBars: 5,
-  minPivotsEach: 3,
-  durationMin: 20,
+  minPivotsEach: 4,
+  durationMin: 25,
   durationMax: 80,
-  minR2: 0.5,
-  minConfidence: 0.7,
+  minR2: 0.7,
+  minConfidence: 0.75,
   breakoutWindow: 3,
 };
 

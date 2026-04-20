@@ -14,6 +14,7 @@ import {
 import { Search } from 'lucide-react';
 import { hma, heikinAshi } from '@/lib/indicators';
 import type { OHLCV } from '@/lib/yahoo';
+import AlertsPanel from './AlertsPanel';
 
 type Props = {
   ticker: string;
@@ -160,6 +161,12 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
               </div>
             </div>
           )}
+
+          {/* Pannello avvisi di prezzo */}
+          <AlertsPanel
+            ticker={ticker}
+            currentPrice={data.quote?.price ?? null}
+          />
 
           {/* Pannello 1: Candle + HMA 50 */}
           <div className="card p-3 sm:p-5">
