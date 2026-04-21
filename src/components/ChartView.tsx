@@ -39,6 +39,7 @@ type QuoteData = {
 };
 
 type ChartMode = 'line' | 'candles';
+type Timeframe = '1h' | '4h' | '1d' | '1w';
 
 export default function ChartView({ ticker, onTickerChange }: Props) {
   const [data, setData] = useState<QuoteData | null>(null);
@@ -46,12 +47,13 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [browseMarket, setBrowseMarket] = useState<MarketKey | 'none'>('none');
   const [chartMode, setChartMode] = useState<ChartMode>('line');
+  const [timeframe, setTimeframe] = useState<Timeframe>('1d');
 
   useEffect(() => {
     let cancel = false;
     setLoading(true);
     setErr(null);
-    fetch(`/api/quote/${encodeURIComponent(ticker)}`)
+    fetch(`/api/quote/${encodeURIComponent(ticker)}?tf=${timeframe}`)
       .then((r) => r.json())
       .then((d) => {
         if (cancel) return;
@@ -63,19 +65,40 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
     return () => {
       cancel = true;
     };
-  }, [ticker]);
+  }, [ticker, timeframe]);
 
   const { candleRows, haRows } = useMemo(() => {
     if (!data?.candles?.length) return { candleRows: [], haRows: [] };
     const closes = data.candles.map((c) => c.c);
     const hmaArr = hma(closes, 50);
     const ha = heikinAshi(data.candles);
-    const candleRows = data.candles.map((c, i) => ({
-      t: c.t * 1000,
-      date: new Date(c.t * 1000).toLocaleDateString('it-IT', {
+
+    const formatDate = (ts: number): string => {
+      const d = new Date(ts * 1000);
+      if (timeframe === '1h' || timeframe === '4h') {
+        return d.toLocaleString('it-IT', {
+          day: '2-digit',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      }
+      if (timeframe === '1w') {
+        return d.toLocaleDateString('it-IT', {
+          day: '2-digit',
+          month: 'short',
+          year: '2-digit',
+        });
+      }
+      return d.toLocaleDateString('it-IT', {
         day: '2-digit',
         month: 'short',
-      }),
+      });
+    };
+
+    const candleRows = data.candles.map((c, i) => ({
+      t: c.t * 1000,
+      date: formatDate(c.t),
       open: c.o,
       high: c.h,
       low: c.l,
@@ -86,10 +109,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
     }));
     const haRows = ha.map((c) => ({
       t: c.t * 1000,
-      date: new Date(c.t * 1000).toLocaleDateString('it-IT', {
-        day: '2-digit',
-        month: 'short',
-      }),
+      date: formatDate(c.t),
       open: c.o,
       high: c.h,
       low: c.l,
@@ -97,7 +117,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
       bullish: c.c >= c.o,
     }));
     return { candleRows, haRows };
-  }, [data]);
+  }, [data, timeframe]);
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
@@ -141,6 +161,32 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
             )}
           </div>
         )}
+      </div>
+
+      {/* Selettore timeframe */}
+      <div className="card p-2 flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-brand-muted font-semibold uppercase tracking-wide px-2">
+          Timeframe
+        </span>
+        <div className="flex items-center gap-1 bg-brand-panel rounded p-0.5">
+          {(['1h', '4h', '1d', '1w'] as Timeframe[]).map((tf) => (
+            <button
+              key={tf}
+              onClick={() => setTimeframe(tf)}
+              className={`px-3 py-1 rounded text-xs font-mono font-semibold transition ${
+                timeframe === tf
+                  ? 'bg-brand-green text-black'
+                  : 'text-brand-muted hover:text-brand-text'
+              }`}
+              title={tfLabel(tf)}
+            >
+              {tf}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-brand-muted hidden sm:inline">
+          {tfLabel(timeframe)}
+        </span>
       </div>
 
       {loading && (
@@ -556,4 +602,14 @@ function HeikinAshiChart({
 }) {
   if (rows.length === 0) return null;
   return <CandleChart rows={rows} />;
+}
+
+function tfLabel(tf: string): string {
+  switch (tf) {
+    case '1h': return 'Orario · ultimi ~60 giorni';
+    case '4h': return 'Ogni 4 ore · aggregato da 1h';
+    case '1d': return 'Giornaliero · ultimi 6 mesi';
+    case '1w': return 'Settimanale · ultimi 5 anni';
+    default: return '';
+  }
 }

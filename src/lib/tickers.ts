@@ -197,6 +197,49 @@ export const MARKETS = {
     'MYTIL.AT', 'ELPE.AT', 'PPC.AT', 'TITC.AT', 'MOH.AT', 'METLK.AT',
     'VIO.AT', 'JUMBO.AT', 'LAMDA.AT', 'SAR.AT', 'OTE.AT',
   ],
+  Giappone: [
+    // TSE Prime — Nikkei 225 top holdings e blue chip
+    '7203.T', // Toyota Motor
+    '6758.T', // Sony Group
+    '6861.T', // Keyence
+    '8306.T', // Mitsubishi UFJ Financial
+    '9432.T', // NTT
+    '9433.T', // KDDI
+    '9434.T', // SoftBank Corp
+    '9984.T', // SoftBank Group
+    '6098.T', // Recruit Holdings
+    '8035.T', // Tokyo Electron
+    '6501.T', // Hitachi
+    '6502.T', // Toshiba
+    '6503.T', // Mitsubishi Electric
+    '6954.T', // Fanuc
+    '6902.T', // Denso
+    '7267.T', // Honda Motor
+    '7201.T', // Nissan Motor
+    '7974.T', // Nintendo
+    '4063.T', // Shin-Etsu Chemical
+    '4502.T', // Takeda Pharmaceutical
+    '4503.T', // Astellas Pharma
+    '4568.T', // Daiichi Sankyo
+    '8316.T', // Sumitomo Mitsui Financial
+    '8411.T', // Mizuho Financial
+    '8058.T', // Mitsubishi Corp
+    '8031.T', // Mitsui & Co
+    '8053.T', // Sumitomo Corp
+    '8001.T', // Itochu Corp
+    '8002.T', // Marubeni
+    '9020.T', // East Japan Railway
+    '9022.T', // Central Japan Railway
+    '9983.T', // Fast Retailing (Uniqlo)
+    '4661.T', // Oriental Land (Tokyo Disneyland)
+    '4543.T', // Terumo
+    '6752.T', // Panasonic
+    '7751.T', // Canon
+    '6971.T', // Kyocera
+    '3382.T', // Seven & i Holdings
+    '2914.T', // Japan Tobacco
+    '4452.T', // Kao Corp
+  ],
   Commodities: [
     'GC=F', 'SI=F', 'PL=F', 'PA=F', 'HG=F',
     'CL=F', 'BZ=F', 'NG=F', 'HO=F', 'RB=F',
