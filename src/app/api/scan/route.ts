@@ -12,7 +12,7 @@ import {
   type WedgePattern,
   type CupHandlePattern,
 } from '@/lib/patterns';
-import { MARKETS, type MarketKey, ALL_TICKERS } from '@/lib/tickers';
+import { MARKETS, type MarketKey, ALL_TICKERS, getMarketForTicker } from '@/lib/tickers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -104,6 +104,7 @@ export async function POST(req: Request) {
         signal_at: new Date(s.timestamp * 1000).toISOString(),
         status: 'ACTIVE',
         entry_price: s.price,
+        market: getMarketForTicker(s.ticker),
       });
     }
 
@@ -120,6 +121,7 @@ export async function POST(req: Request) {
         status: 'ACTIVE',
         entry_price: last.c,
         pattern_data: pattern,
+        market: getMarketForTicker(ticker),
       });
     }
 
@@ -137,6 +139,7 @@ export async function POST(req: Request) {
         status: 'ACTIVE',
         entry_price: last.c,
         pattern_data: pattern,
+        market: getMarketForTicker(ticker),
       });
     }
 
@@ -156,6 +159,7 @@ export async function POST(req: Request) {
         status: 'ACTIVE',
         entry_price: last.c,
         pattern_data: pattern,
+        market: getMarketForTicker(ticker),
       });
     }
 
@@ -172,6 +176,7 @@ export async function POST(req: Request) {
         status: 'ACTIVE',
         entry_price: last.c,
         pattern_data: pattern,
+        market: getMarketForTicker(ticker),
       });
     }
 

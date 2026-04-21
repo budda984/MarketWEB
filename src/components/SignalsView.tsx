@@ -13,6 +13,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import type { DbSignal } from '@/types/db';
+import { MARKETS, type MarketKey, getMarketForTicker } from '@/lib/tickers';
 
 type Props = {
   signals: DbSignal[];
@@ -48,6 +49,7 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
   const [strength, setStrength] = useState<StrengthFilter>('all');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [strategy, setStrategy] = useState<StrategyFilter>('all');
+  const [marketFilter, setMarketFilter] = useState<MarketKey | 'all'>('all');
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -71,11 +73,30 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
           return false;
         }
       }
+      if (marketFilter !== 'all') {
+        // Preferisci il campo DB se presente, altrimenti deduci dal ticker
+        const m = s.market ?? getMarketForTicker(s.ticker);
+        if (m !== marketFilter) return false;
+      }
       if (query && !s.ticker.toLowerCase().includes(query.toLowerCase()))
         return false;
       return true;
     });
-  }, [signals, strength, status, strategy, query]);
+  }, [signals, strength, status, strategy, marketFilter, query]);
+
+  // Conteggi per mercato per il dropdown
+  const marketCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    const seen = new Set<string>();
+    for (const s of signals) {
+      const key = `${s.ticker}|${s.strategy}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const m = s.market ?? getMarketForTicker(s.ticker);
+      if (m) counts[m] = (counts[m] ?? 0) + 1;
+    }
+    return counts;
+  }, [signals]);
 
   const groups = useMemo(() => {
     return {
@@ -127,6 +148,39 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
               label="📌 Deboli"
             />
           </ScrollRow>
+        </div>
+
+        {/* Riga: mercato (dropdown perché sono 24) */}
+        <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-brand-border">
+          <span className="text-xs text-brand-muted font-semibold uppercase tracking-wide">
+            Mercato:
+          </span>
+          <select
+            value={marketFilter}
+            onChange={(e) =>
+              setMarketFilter(e.target.value as MarketKey | 'all')
+            }
+            className="input text-xs py-1"
+          >
+            <option value="all">
+              Tutti ({Object.values(marketCounts).reduce((s, v) => s + v, 0)})
+            </option>
+            {(Object.keys(MARKETS) as MarketKey[])
+              .filter((m) => (marketCounts[m] ?? 0) > 0)
+              .map((m) => (
+                <option key={m} value={m}>
+                  {m} ({marketCounts[m] ?? 0})
+                </option>
+              ))}
+          </select>
+          {marketFilter !== 'all' && (
+            <button
+              onClick={() => setMarketFilter('all')}
+              className="text-xs text-brand-muted hover:text-brand-text underline"
+            >
+              azzera
+            </button>
+          )}
         </div>
 
         {/* Riga 2: stati */}
