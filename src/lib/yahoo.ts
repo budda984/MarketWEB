@@ -168,11 +168,14 @@ type YahooChartResponse = {
 };
 
 /**
- * Quote arricchito con info economiche: nome completo, market cap,
- * P/E, dividend yield, 52-week high/low.
+ * Quote arricchito. Nella versione attuale gli endpoint Yahoo
+ * quoteSummary e search sono bloccati da IP cloud (403 Host not in
+ * allowlist), quindi ritorniamo solo i campi base da yahooQuote +
+ * il nome completo dal dizionario locale TICKER_NAMES.
  *
- * Usa l'endpoint quoteSummary di Yahoo. Se l'endpoint fallisce,
- * ritorna solo i campi base da yahooQuote.
+ * I campi di fondamentali (marketCap, peRatio, ecc.) sono dichiarati
+ * per compatibilità futura ma restano undefined. Il client nasconde la
+ * card Fondamentali se tutti questi campi sono assenti.
  */
 export type YahooQuoteFull = {
   ticker: string;
@@ -181,12 +184,11 @@ export type YahooQuoteFull = {
   changePct: number;
   currency?: string;
   exchange?: string;
-  // Info economiche (opzionali, potrebbero mancare per forex/crypto)
   longName?: string;
   shortName?: string;
   marketCap?: number;
   peRatio?: number;
-  dividendYield?: number; // frazione es. 0.025 = 2.5%
+  dividendYield?: number;
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
   sector?: string;
@@ -200,116 +202,12 @@ export async function yahooQuoteFull(
   const base = await yahooQuote(ticker, timeoutMs);
   if (!base) return null;
 
-  // Tento quoteSummary per il dettaglio. Fallback silenzioso se fallisce.
-  const modules = [
-    'price',
-    'summaryDetail',
-    'defaultKeyStatistics',
-    'assetProfile',
-  ].join(',');
-  const url =
-    `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}` +
-    `?modules=${modules}`;
+  // Import dinamico per evitare circular deps (ticker-names è side-effect free).
+  const { TICKER_NAMES } = await import('./ticker-names');
+  const longName = TICKER_NAMES[ticker] ?? TICKER_NAMES[ticker.toUpperCase()];
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': UA, Accept: 'application/json' },
-      signal: ctrl.signal,
-      cache: 'no-store',
-    });
-    if (!res.ok) return base;
-
-    type SummaryResult = {
-      quoteSummary?: {
-        result?: Array<{
-          price?: { longName?: string; shortName?: string };
-          summaryDetail?: {
-            marketCap?: { raw?: number };
-            trailingPE?: { raw?: number };
-            dividendYield?: { raw?: number };
-            fiftyTwoWeekHigh?: { raw?: number };
-            fiftyTwoWeekLow?: { raw?: number };
-          };
-          assetProfile?: { sector?: string; industry?: string };
-        }>;
-      };
-    };
-    const json = (await res.json()) as SummaryResult;
-    const r = json?.quoteSummary?.result?.[0];
-    if (!r) return base;
-
-    return {
-      ...base,
-      longName: r.price?.longName,
-      shortName: r.price?.shortName,
-      marketCap: r.summaryDetail?.marketCap?.raw,
-      peRatio: r.summaryDetail?.trailingPE?.raw,
-      dividendYield: r.summaryDetail?.dividendYield?.raw,
-      fiftyTwoWeekHigh: r.summaryDetail?.fiftyTwoWeekHigh?.raw,
-      fiftyTwoWeekLow: r.summaryDetail?.fiftyTwoWeekLow?.raw,
-      sector: r.assetProfile?.sector,
-      industry: r.assetProfile?.industry,
-    };
-  } catch {
-    return base;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * Ricerca libera: trova ticker a partire dal nome.
- * Es. "apple" → [{ticker: "AAPL", name: "Apple Inc.", exchange: "NMS"}, ...]
- */
-export type YahooSearchResult = {
-  ticker: string;
-  name: string;
-  exchange?: string;
-  type?: string; // EQUITY, ETF, CRYPTOCURRENCY, ecc.
-};
-
-export async function yahooSearch(
-  query: string,
-  limit = 8,
-  timeoutMs = 8000
-): Promise<YahooSearchResult[]> {
-  if (!query || query.trim().length < 1) return [];
-  const url =
-    `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}` +
-    `&quotesCount=${limit}&newsCount=0`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': UA, Accept: 'application/json' },
-      signal: ctrl.signal,
-      cache: 'no-store',
-    });
-    if (!res.ok) return [];
-    type SearchResponse = {
-      quotes?: Array<{
-        symbol?: string;
-        shortname?: string;
-        longname?: string;
-        exchange?: string;
-        quoteType?: string;
-      }>;
-    };
-    const json = (await res.json()) as SearchResponse;
-    const quotes = json?.quotes ?? [];
-    return quotes
-      .filter((q) => q.symbol)
-      .map((q) => ({
-        ticker: q.symbol!,
-        name: q.longname ?? q.shortname ?? q.symbol!,
-        exchange: q.exchange,
-        type: q.quoteType,
-      }));
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
-  }
+  return {
+    ...base,
+    longName,
+  };
 }

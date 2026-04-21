@@ -18,7 +18,8 @@ import {
 } from 'lucide-react';
 import { hma, heikinAshi } from '@/lib/indicators';
 import type { OHLCV } from '@/lib/yahoo';
-import { MARKETS, type MarketKey } from '@/lib/tickers';
+import { MARKETS, type MarketKey, ALL_TICKERS, getMarketForTicker } from '@/lib/tickers';
+import { localSearch } from '@/lib/ticker-names';
 import AlertsPanel from './AlertsPanel';
 
 type Props = {
@@ -432,35 +433,28 @@ function InlineSearch({
   const [v, setV] = useState(defaultValue);
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [highlight, setHighlight] = useState(-1);
 
   useEffect(() => setV(defaultValue), [defaultValue]);
 
-  // Debounced search
+  // Ricerca locale: zero fetch, istantanea. Cerca sia nel ticker che nel nome
+  // dai ticker presenti nel sistema (via TICKER_NAMES).
   useEffect(() => {
     const q = v.trim();
-    // Non cercare se è già uguale al value corrente (evita chiamate inutili
-    // al primo render o dopo un submit)
-    if (q.length < 2 || q.toUpperCase() === defaultValue.toUpperCase()) {
+    if (q.length < 1 || q.toUpperCase() === defaultValue.toUpperCase()) {
       setSuggestions([]);
       setOpen(false);
       return;
     }
-    setLoading(true);
-    const handle = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-        const data = await res.json();
-        setSuggestions(data.results ?? []);
-        setOpen((data.results ?? []).length > 0);
-      } catch {
-        setSuggestions([]);
-      } finally {
-        setLoading(false);
-      }
-    }, 250);
-    return () => clearTimeout(handle);
+    const results = localSearch(q, ALL_TICKERS, 10);
+    const mapped = results.map((r) => ({
+      ticker: r.ticker,
+      name: r.name,
+      exchange: undefined,
+      type: undefined,
+    }));
+    setSuggestions(mapped);
+    setOpen(mapped.length > 0);
   }, [v, defaultValue]);
 
   function pick(ticker: string) {
@@ -534,7 +528,7 @@ function InlineSearch({
                     {s.ticker}
                   </span>
                   <span className="text-xs text-brand-muted">
-                    {s.exchange} · {s.type}
+                    {getMarketForTicker(s.ticker) ?? ''}
                   </span>
                 </div>
                 <div className="text-xs text-brand-muted truncate">
@@ -542,11 +536,6 @@ function InlineSearch({
                 </div>
               </button>
             ))}
-          </div>
-        )}
-        {loading && (
-          <div className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-brand-muted">
-            …
           </div>
         )}
       </div>
