@@ -84,9 +84,13 @@ export const MARKETS = {
     'CFX-USD', 'BTT-USD', 'JASMY-USD', 'LUNC-USD', 'LUNA-USD',
   ],
   Italia: [
+    // FTSE MIB e principali ticker Euronext Milan.
+    // Attenzione: ticker delisted rimossi per evitare errori:
+    //   LUX.MI (Luxottica, delisted 2018, ora EssilorLuxottica → EL.PA)
+    //   ATL.MI (Atlantia, delisted dic 2022, ora Mundys privata)
     'ENI.MI', 'ISP.MI', 'UCG.MI', 'ENEL.MI', 'STM.MI', 'TIT.MI', 'G.MI', 'RACE.MI',
-    'MB.MI', 'LUX.MI', 'CNHI.MI', 'MONC.MI', 'PRY.MI', 'AMP.MI', 'A2A.MI',
-    'AZM.MI', 'ATL.MI', 'BAMI.MI', 'BMED.MI', 'BMPS.MI', 'BPE.MI', 'BRE.MI',
+    'MB.MI', 'CNHI.MI', 'MONC.MI', 'PRY.MI', 'AMP.MI', 'A2A.MI',
+    'AZM.MI', 'BAMI.MI', 'BMED.MI', 'BMPS.MI', 'BPE.MI', 'BRE.MI',
     'BZU.MI', 'CPR.MI', 'CRL.MI', 'DAN.MI', 'DIA.MI', 'ERG.MI', 'FBK.MI',
     'HER.MI', 'IG.MI', 'IP.MI', 'IRE.MI', 'ITM.MI', 'JUVE.MI', 'LDO.MI',
     'NEXI.MI', 'PIRC.MI', 'PLT.MI', 'PST.MI', 'REC.MI', 'RWAY.MI',

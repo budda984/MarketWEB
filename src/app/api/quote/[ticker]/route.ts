@@ -22,23 +22,36 @@ export async function GET(
   const url = new URL(req.url);
   const tf = url.searchParams.get('tf') ?? '1d';
 
-  const { period, interval, needsAggregation } = resolveTimeframe(tf);
+  try {
+    const { period, interval, needsAggregation } = resolveTimeframe(tf);
 
-  const [q, rawCandles] = await Promise.all([
-    yahooQuoteFull(ticker),
-    yahooDownload(ticker, period, interval),
-  ]);
+    const [q, rawCandles] = await Promise.all([
+      yahooQuoteFull(ticker),
+      yahooDownload(ticker, period, interval),
+    ]);
 
-  const candles = needsAggregation ? aggregate4h(rawCandles) : rawCandles;
+    const candles = needsAggregation ? aggregate4h(rawCandles) : rawCandles;
 
-  if (!q && candles.length === 0) {
+    if (!q && candles.length === 0) {
+      return NextResponse.json(
+        {
+          error: `Ticker ${ticker} non disponibile. Potrebbe essere delisted o non quotato su Yahoo Finance.`,
+        },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ quote: q, candles, timeframe: tf });
+  } catch (e) {
     return NextResponse.json(
-      { error: `No data for ${ticker} (tf=${tf})` },
-      { status: 404 }
+      {
+        error: `Errore caricando ${ticker}: ${
+          e instanceof Error ? e.message : 'errore sconosciuto'
+        }`,
+      },
+      { status: 500 }
     );
   }
-
-  return NextResponse.json({ quote: q, candles, timeframe: tf });
 }
 
 function resolveTimeframe(tf: string): {

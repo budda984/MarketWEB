@@ -21,6 +21,7 @@ import type { OHLCV } from '@/lib/yahoo';
 import { MARKETS, type MarketKey, ALL_TICKERS, getMarketForTicker } from '@/lib/tickers';
 import { localSearch } from '@/lib/ticker-names';
 import AlertsPanel from './AlertsPanel';
+import AddToWatchlistButton from './AddToWatchlistButton';
 
 type Props = {
   ticker: string;
@@ -63,15 +64,36 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
     let cancel = false;
     setLoading(true);
     setErr(null);
-    fetch(`/api/quote/${encodeURIComponent(ticker)}?tf=${timeframe}`)
-      .then((r) => r.json())
-      .then((d) => {
+    (async () => {
+      try {
+        const r = await fetch(
+          `/api/quote/${encodeURIComponent(ticker)}?tf=${timeframe}`
+        );
+        const text = await r.text();
         if (cancel) return;
+        if (!text) {
+          setErr(
+            `Ticker ${ticker} non disponibile (può essere delisted o non quotato).`
+          );
+          return;
+        }
+        let d: { quote: unknown; candles: unknown; error?: string };
+        try {
+          d = JSON.parse(text);
+        } catch {
+          setErr(
+            `Ticker ${ticker} non disponibile (risposta non valida dal data provider).`
+          );
+          return;
+        }
         if (d.error) setErr(d.error);
-        else setData(d);
-      })
-      .catch((e) => !cancel && setErr(String(e)))
-      .finally(() => !cancel && setLoading(false));
+        else setData(d as unknown as QuoteData);
+      } catch (e) {
+        if (!cancel) setErr(String(e));
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
     return () => {
       cancel = true;
     };
@@ -263,6 +285,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
                 <div className="text-xs sm:text-sm text-brand-muted sm:ml-auto">
                   Prev close: {data.quote.previousClose.toFixed(2)}
                 </div>
+                <AddToWatchlistButton ticker={data.quote.ticker} />
               </div>
             </div>
           )}
