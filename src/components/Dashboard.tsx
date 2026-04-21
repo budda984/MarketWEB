@@ -13,6 +13,7 @@ import {
   Settings,
   Menu,
   X,
+  Bell,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
@@ -22,8 +23,9 @@ import SignalsView from './SignalsView';
 import BacktestView from './BacktestView';
 import SettingsView from './SettingsView';
 import WatchlistPanel from './WatchlistPanel';
+import AlertsView from './AlertsView';
 
-type View = 'chart' | 'signals' | 'backtest' | 'settings';
+type View = 'chart' | 'signals' | 'backtest' | 'settings' | 'alerts';
 
 type Props = {
   userEmail: string;
@@ -186,6 +188,12 @@ export default function Dashboard({
             label="Chart"
           />
           <NavButton
+            active={view === 'alerts'}
+            onClick={() => setView('alerts')}
+            icon={<Bell className="w-4 h-4" />}
+            label="Avvisi"
+          />
+          <NavButton
             active={view === 'backtest'}
             onClick={() => setView('backtest')}
             icon={<Zap className="w-4 h-4" />}
@@ -328,6 +336,12 @@ export default function Dashboard({
                   Backtest
                 </span>
               )}
+              {view === 'alerts' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <Bell className="w-4 h-4 flex-shrink-0" />
+                  Avvisi
+                </span>
+              )}
               {view === 'settings' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <Settings className="w-4 h-4 flex-shrink-0" />
@@ -376,6 +390,7 @@ export default function Dashboard({
           {view === 'backtest' && (
             <BacktestView initialMarkets={selectedMarkets} />
           )}
+          {view === 'alerts' && <AlertsView onOpenTicker={onOpenTicker} />}
           {view === 'settings' && <SettingsView />}
         </div>
       </main>

@@ -1,18 +1,18 @@
 import { NextResponse } from 'next/server';
-import { yahooQuote, yahooDownload, type OHLCV, type Period, type Interval } from '@/lib/yahoo';
+import {
+  yahooQuoteFull,
+  yahooDownload,
+  type OHLCV,
+  type Period,
+  type Interval,
+} from '@/lib/yahoo';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/quote/[ticker]?tf=1h|4h|1d|1w
- * Returns quote + candele per il chart sul timeframe richiesto.
- *
- * Note Yahoo Finance:
- *  - interval=1h → massimo 2 anni, ma spesso ritorna solo ultime 60 giorni
- *  - interval=4h → non esiste, viene aggregato da 1h lato codice
- *  - interval=1d → default, supporta fino a max
- *  - interval=1wk → settimanale
+ * Returns quote arricchito + candele per il chart.
  */
 export async function GET(
   req: Request,
@@ -25,13 +25,11 @@ export async function GET(
   const { period, interval, needsAggregation } = resolveTimeframe(tf);
 
   const [q, rawCandles] = await Promise.all([
-    yahooQuote(ticker),
+    yahooQuoteFull(ticker),
     yahooDownload(ticker, period, interval),
   ]);
 
-  const candles = needsAggregation
-    ? aggregate4h(rawCandles)
-    : rawCandles;
+  const candles = needsAggregation ? aggregate4h(rawCandles) : rawCandles;
 
   if (!q && candles.length === 0) {
     return NextResponse.json(

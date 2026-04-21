@@ -34,6 +34,15 @@ type QuoteData = {
     changePct: number;
     currency?: string;
     exchange?: string;
+    longName?: string;
+    shortName?: string;
+    marketCap?: number;
+    peRatio?: number;
+    dividendYield?: number;
+    fiftyTwoWeekHigh?: number;
+    fiftyTwoWeekLow?: number;
+    sector?: string;
+    industry?: string;
   } | null;
   candles: OHLCV[];
 };
@@ -210,10 +219,16 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
                   <div>
                     <div className="text-brand-muted text-xs">
                       {data.quote.exchange}
+                      {data.quote.sector && ` · ${data.quote.sector}`}
                     </div>
                     <div className="text-2xl sm:text-3xl font-bold">
                       {data.quote.ticker}
                     </div>
+                    {(data.quote.longName || data.quote.shortName) && (
+                      <div className="text-sm sm:text-base text-brand-muted mt-0.5 max-w-xs sm:max-w-md truncate">
+                        {data.quote.longName ?? data.quote.shortName}
+                      </div>
+                    )}
                   </div>
                   <div
                     className={`text-lg font-mono sm:hidden ${
@@ -249,6 +264,11 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* Card info economiche (solo se almeno un dato esiste) */}
+          {data.quote && hasAnyStat(data.quote) && (
+            <FundamentalsCard quote={data.quote} />
           )}
 
           {/* Alert pannello */}
@@ -395,6 +415,13 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
   );
 }
 
+type SearchSuggestion = {
+  ticker: string;
+  name: string;
+  exchange?: string;
+  type?: string;
+};
+
 function InlineSearch({
   defaultValue,
   onChange,
@@ -403,23 +430,126 @@ function InlineSearch({
   onChange: (s: string) => void;
 }) {
   const [v, setV] = useState(defaultValue);
+  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [highlight, setHighlight] = useState(-1);
+
   useEffect(() => setV(defaultValue), [defaultValue]);
+
+  // Debounced search
+  useEffect(() => {
+    const q = v.trim();
+    // Non cercare se è già uguale al value corrente (evita chiamate inutili
+    // al primo render o dopo un submit)
+    if (q.length < 2 || q.toUpperCase() === defaultValue.toUpperCase()) {
+      setSuggestions([]);
+      setOpen(false);
+      return;
+    }
+    setLoading(true);
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        setSuggestions(data.results ?? []);
+        setOpen((data.results ?? []).length > 0);
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [v, defaultValue]);
+
+  function pick(ticker: string) {
+    setV(ticker);
+    setOpen(false);
+    setSuggestions([]);
+    setHighlight(-1);
+    onChange(ticker.toUpperCase());
+  }
+
+  function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!open || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight((h) => Math.min(h + 1, suggestions.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === 'Enter' && highlight >= 0) {
+      e.preventDefault();
+      pick(suggestions[highlight].ticker);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  }
+
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
         onChange(v.toUpperCase());
+        setOpen(false);
       }}
-      className="flex items-center gap-2 flex-1"
+      className="flex items-center gap-2 flex-1 relative"
     >
-      <input
-        type="text"
-        value={v}
-        onChange={(e) => setV(e.target.value)}
-        placeholder="AAPL, BTC-USD…"
-        className="input flex-1 min-w-0 font-mono"
-        autoCapitalize="characters"
-      />
+      <div className="flex-1 min-w-0 relative">
+        <input
+          type="text"
+          value={v}
+          onChange={(e) => {
+            setV(e.target.value);
+            setHighlight(-1);
+          }}
+          onFocus={() => suggestions.length > 0 && setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 200)}
+          onKeyDown={handleKey}
+          placeholder="AAPL, Apple, BTC…"
+          className="input w-full font-mono"
+          autoCapitalize="off"
+          autoComplete="off"
+        />
+        {open && suggestions.length > 0 && (
+          <div className="absolute top-full left-0 right-0 mt-1 bg-brand-panel border border-brand-border rounded-md shadow-lg z-30 max-h-72 overflow-y-auto">
+            {suggestions.map((s, i) => (
+              <button
+                key={s.ticker + i}
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(s.ticker);
+                }}
+                onMouseEnter={() => setHighlight(i)}
+                className={`w-full text-left px-3 py-2 border-b border-brand-border last:border-b-0 transition ${
+                  highlight === i
+                    ? 'bg-brand-green/15'
+                    : 'hover:bg-brand-card/60'
+                }`}
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-mono font-bold text-sm">
+                    {s.ticker}
+                  </span>
+                  <span className="text-xs text-brand-muted">
+                    {s.exchange} · {s.type}
+                  </span>
+                </div>
+                <div className="text-xs text-brand-muted truncate">
+                  {s.name}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+        {loading && (
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-brand-muted">
+            …
+          </div>
+        )}
+      </div>
       <button type="submit" className="btn-ghost flex-shrink-0 text-xs">
         Apri
       </button>
@@ -612,4 +742,105 @@ function tfLabel(tf: string): string {
     case '1w': return 'Settimanale · ultimi 5 anni';
     default: return '';
   }
+}
+
+function hasAnyStat(q: QuoteData['quote']): boolean {
+  if (!q) return false;
+  return (
+    q.marketCap != null ||
+    q.peRatio != null ||
+    q.dividendYield != null ||
+    q.fiftyTwoWeekHigh != null ||
+    q.fiftyTwoWeekLow != null
+  );
+}
+
+function formatMarketCap(n?: number): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  if (n >= 1e12) return `${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  return n.toFixed(0);
+}
+
+function FundamentalsCard({
+  quote,
+}: {
+  quote: NonNullable<QuoteData['quote']>;
+}) {
+  const rangePct =
+    quote.fiftyTwoWeekHigh != null && quote.fiftyTwoWeekLow != null
+      ? ((quote.price - quote.fiftyTwoWeekLow) /
+          (quote.fiftyTwoWeekHigh - quote.fiftyTwoWeekLow)) *
+        100
+      : null;
+
+  return (
+    <div className="card p-3 sm:p-4">
+      <div className="text-xs font-semibold text-brand-muted uppercase tracking-wide mb-2">
+        Fondamentali
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat
+          label="Market Cap"
+          value={
+            quote.marketCap != null
+              ? `${formatMarketCap(quote.marketCap)} ${quote.currency ?? ''}`
+              : '—'
+          }
+        />
+        <Stat
+          label="P/E ratio"
+          value={quote.peRatio != null ? quote.peRatio.toFixed(2) : '—'}
+        />
+        <Stat
+          label="Div. yield"
+          value={
+            quote.dividendYield != null
+              ? `${(quote.dividendYield * 100).toFixed(2)}%`
+              : '—'
+          }
+        />
+        <Stat
+          label="52w range"
+          value={
+            quote.fiftyTwoWeekLow != null && quote.fiftyTwoWeekHigh != null
+              ? `${quote.fiftyTwoWeekLow.toFixed(2)} – ${quote.fiftyTwoWeekHigh.toFixed(2)}`
+              : '—'
+          }
+          sub={
+            rangePct != null
+              ? `posizione: ${rangePct.toFixed(0)}% del range`
+              : undefined
+          }
+        />
+      </div>
+      {(quote.sector || quote.industry) && (
+        <div className="mt-3 pt-3 border-t border-brand-border text-xs text-brand-muted">
+          {quote.sector}
+          {quote.industry && ` · ${quote.industry}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+}) {
+  return (
+    <div>
+      <div className="text-xs text-brand-muted">{label}</div>
+      <div className="font-mono text-sm sm:text-base font-semibold">
+        {value}
+      </div>
+      {sub && <div className="text-xs text-brand-muted mt-0.5">{sub}</div>}
+    </div>
+  );
 }

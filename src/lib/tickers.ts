@@ -240,6 +240,18 @@ export const MARKETS = {
     '2914.T', // Japan Tobacco
     '4452.T', // Kao Corp
   ],
+  Forex: [
+    // 8 major pairs — Yahoo usa il formato XXXYYY=X oppure XXX=X per
+    // coppie contro USD (dove non specificato è sempre USD).
+    'EURUSD=X', // Euro / US Dollar
+    'GBPUSD=X', // British Pound / US Dollar
+    'USDJPY=X', // US Dollar / Japanese Yen
+    'USDCHF=X', // US Dollar / Swiss Franc
+    'AUDUSD=X', // Australian Dollar / US Dollar
+    'USDCAD=X', // US Dollar / Canadian Dollar
+    'NZDUSD=X', // New Zealand Dollar / US Dollar
+    'EURGBP=X', // Euro / British Pound
+  ],
   Commodities: [
     'GC=F', 'SI=F', 'PL=F', 'PA=F', 'HG=F',
     'CL=F', 'BZ=F', 'NG=F', 'HO=F', 'RB=F',
@@ -270,3 +282,18 @@ export type MarketKey = keyof typeof MARKETS;
 export const ALL_TICKERS: string[] = Array.from(
   new Set(Object.values(MARKETS).flat())
 );
+
+/**
+ * Ritorna il mercato che contiene un determinato ticker, o null.
+ * Se il ticker è in più mercati (es. NASDAQ ticker che è anche in ETF),
+ * ritorna il primo match.
+ */
+export function getMarketForTicker(ticker: string): MarketKey | null {
+  const upper = ticker.toUpperCase();
+  for (const [market, tickers] of Object.entries(MARKETS) as Array<
+    [MarketKey, readonly string[]]
+  >) {
+    if (tickers.includes(upper)) return market;
+  }
+  return null;
+}
