@@ -183,7 +183,23 @@ export async function POST(req: Request) {
     }
 
     if (rows.length > 0) {
-      await supabase.from('signals').insert(rows);
+      // UPSERT come nel cron: il DB ha UNIQUE(user_id, ticker, strategy)
+      // con NULLS NOT DISTINCT (migration 003_dedup_signals), quindi un
+      // plain insert fallirebbe sulla seconda scansione dello stesso
+      // ticker+strategy. Usando upsert aggiorniamo la riga esistente con
+      // signal_at, strength, price correnti.
+      const { error: upsertError } = await supabase
+        .from('signals')
+        .upsert(rows, {
+          onConflict: 'user_id,ticker,strategy',
+          ignoreDuplicates: false,
+        });
+      if (upsertError) {
+        return NextResponse.json(
+          { error: `Errore salvataggio segnali: ${upsertError.message}` },
+          { status: 500 }
+        );
+      }
     }
   }
 
