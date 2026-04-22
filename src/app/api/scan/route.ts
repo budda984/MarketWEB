@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { yahooDownloadMany, type OHLCV } from '@/lib/yahoo';
 import { scanTickers, type SignalStrength } from '@/lib/signals';
 import {
@@ -13,6 +14,7 @@ import {
   type CupHandlePattern,
 } from '@/lib/patterns';
 import { MARKETS, type MarketKey, ALL_TICKERS, getMarketForTicker } from '@/lib/tickers';
+import { evaluateAlerts } from '@/lib/alerts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -185,6 +187,22 @@ export async function POST(req: Request) {
     }
   }
 
+  // ============================================================
+  // Valutazione alert di prezzo (solo dell'utente corrente)
+  // ============================================================
+  // Estraggo i prezzi correnti dalle candele scaricate e chiamo la
+  // funzione condivisa con cron. Uso admin client per bypassare RLS
+  // sugli update (sono legit perché filtro su user.id).
+  const currentPrices = new Map<string, number>();
+  for (const [ticker, candles] of Object.entries(candlesByTicker)) {
+    if (candles.length > 0) {
+      const last = candles[candles.length - 1];
+      currentPrices.set(ticker, last.c);
+    }
+  }
+  const admin = createAdminClient();
+  const alertResult = await evaluateAlerts(admin, currentPrices, user.id);
+
   return NextResponse.json({
     count:
       hmaSignals.length +
@@ -200,6 +218,10 @@ export async function POST(req: Request) {
       flagPatterns: flagRows.length,
       wedgePatterns: wedgeRows.length,
       cupPatterns: cupRows.length,
+    },
+    alerts: {
+      checked: alertResult.checked,
+      triggered: alertResult.triggered,
     },
     signals: hmaSignals,
     patterns: [

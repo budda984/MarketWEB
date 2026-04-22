@@ -13,6 +13,7 @@ import {
   type CupHandlePattern,
 } from '@/lib/patterns';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
+import { evaluateAlerts } from '@/lib/alerts';
 import { sendTelegramMessage, formatSignalsDigest } from '@/lib/telegram';
 
 export const runtime = 'nodejs';
@@ -235,89 +236,10 @@ export async function GET(req: Request) {
   }
 
   // ============================================================
-  // Valutazione alert di prezzo
+  // Valutazione alert di prezzo (logica condivisa con lo scan manuale)
   // ============================================================
-  // Per ogni alert attivo, controllo se il prezzo corrente attraversa la
-  // soglia. Se sì, aggiorno triggered_at + last_price e raccolgo la notifica
-  // da inviare via Telegram.
-  type TriggeredAlert = {
-    userId: string;
-    ticker: string;
-    threshold: number;
-    direction: 'above' | 'below' | 'cross';
-    currentPrice: number;
-    previousPrice: number | null;
-    note: string | null;
-  };
-  const alertsByUser = new Map<string, TriggeredAlert[]>();
-
-  const { data: activeAlerts } = await admin
-    .from('price_alerts')
-    .select('*')
-    .eq('active', true);
-
-  if (activeAlerts && activeAlerts.length > 0) {
-    const alertUpdates: Array<{
-      id: string;
-      last_price: number;
-      triggered_at?: string | null;
-      active?: boolean;
-    }> = [];
-
-    for (const a of activeAlerts) {
-      const price = currentPrices.get(a.ticker);
-      if (price == null) continue; // ticker non scansionato in questo cron
-
-      const prev = a.last_price != null ? Number(a.last_price) : null;
-      const threshold = Number(a.threshold);
-
-      let triggered = false;
-      if (a.direction === 'above') {
-        // scatta solo se passa da <= threshold a > threshold
-        triggered = prev != null && prev <= threshold && price > threshold;
-        // oppure primo check con prezzo già > (senza prev)
-        if (prev == null && price > threshold) triggered = true;
-      } else if (a.direction === 'below') {
-        triggered = prev != null && prev >= threshold && price < threshold;
-        if (prev == null && price < threshold) triggered = true;
-      } else {
-        // cross
-        triggered =
-          prev != null &&
-          ((prev <= threshold && price > threshold) ||
-            (prev >= threshold && price < threshold));
-      }
-
-      const update: typeof alertUpdates[0] = {
-        id: a.id,
-        last_price: price,
-      };
-
-      if (triggered) {
-        update.triggered_at = new Date().toISOString();
-        if (a.one_shot) update.active = false;
-
-        const list = alertsByUser.get(a.user_id) ?? [];
-        list.push({
-          userId: a.user_id,
-          ticker: a.ticker,
-          threshold,
-          direction: a.direction,
-          currentPrice: price,
-          previousPrice: prev,
-          note: a.note,
-        });
-        alertsByUser.set(a.user_id, list);
-      }
-
-      alertUpdates.push(update);
-    }
-
-    // Batch update
-    for (const u of alertUpdates) {
-      await admin.from('price_alerts').update(u).eq('id', u.id);
-    }
-  }
+  const alertResult = await evaluateAlerts(admin, currentPrices);
+  const alertsByUser = alertResult.byUser;
 
   // Telegram
   let telegramSent = 0;
