@@ -223,12 +223,41 @@ export async function GET(req: Request) {
   }
 
   if (rows.length > 0) {
+    // Dedup del batch: Postgres rifiuta se lo stesso UPSERT tocca due
+    // volte la stessa chiave (user_id, ticker, strategy). Può succedere
+    // se un detector trova più pattern dello stesso tipo sullo stesso
+    // ticker. Tengo il più forte a parità di strength il più recente.
+    type SignalRow = {
+      user_id: string | null;
+      ticker: string;
+      strategy: string;
+      strength: number;
+      signal_at: string;
+      [key: string]: unknown;
+    };
+    const typedRows = rows as SignalRow[];
+    const byKey = new Map<string, SignalRow>();
+    for (const row of typedRows) {
+      const key = `${row.user_id ?? 'PUBLIC'}|${row.ticker}|${row.strategy}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, row);
+        continue;
+      }
+      const better =
+        row.strength > existing.strength ||
+        (row.strength === existing.strength &&
+          row.signal_at > existing.signal_at);
+      if (better) byKey.set(key, row);
+    }
+    const deduped = Array.from(byKey.values());
+
     // UPSERT: se (user_id, ticker, strategy) esiste già, aggiorna invece di
     // creare un nuovo record. Così evitiamo duplicati quando il cron gira
     // più volte nello stesso giorno.
     const { error } = await admin
       .from('signals')
-      .upsert(rows, {
+      .upsert(deduped, {
         onConflict: 'user_id,ticker,strategy',
         ignoreDuplicates: false,
       });

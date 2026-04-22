@@ -183,14 +183,45 @@ export async function POST(req: Request) {
     }
 
     if (rows.length > 0) {
-      // UPSERT come nel cron: il DB ha UNIQUE(user_id, ticker, strategy)
-      // con NULLS NOT DISTINCT (migration 003_dedup_signals), quindi un
-      // plain insert fallirebbe sulla seconda scansione dello stesso
-      // ticker+strategy. Usando upsert aggiorniamo la riga esistente con
-      // signal_at, strength, price correnti.
+      // Dedup del batch prima dell'upsert: Postgres non permette che lo
+      // stesso UPSERT tocchi due volte la stessa chiave (user_id, ticker,
+      // strategy) — "ON CONFLICT DO UPDATE command cannot affect row a
+      // second time". Se il detector ha trovato più pattern dello stesso
+      // tipo sullo stesso ticker (es. due H&S in periodi diversi),
+      // tengo solo il più forte. A parità di strength, vince il più
+      // recente (signal_at più alto).
+      type SignalRow = {
+        user_id: string;
+        ticker: string;
+        strategy: string;
+        strength: number;
+        signal_at: string;
+        [key: string]: unknown;
+      };
+      const typedRows = rows as SignalRow[];
+      const byKey = new Map<string, SignalRow>();
+      for (const row of typedRows) {
+        const key = `${row.user_id}|${row.ticker}|${row.strategy}`;
+        const existing = byKey.get(key);
+        if (!existing) {
+          byKey.set(key, row);
+          continue;
+        }
+        const better =
+          row.strength > existing.strength ||
+          (row.strength === existing.strength &&
+            row.signal_at > existing.signal_at);
+        if (better) byKey.set(key, row);
+      }
+      const deduped = Array.from(byKey.values());
+
+      // UPSERT: il DB ha UNIQUE(user_id, ticker, strategy) con
+      // NULLS NOT DISTINCT (migration 003). Un plain insert sulla seconda
+      // scansione dello stesso ticker fallirebbe; l'upsert aggiorna la
+      // riga esistente con signal_at/strength/price correnti.
       const { error: upsertError } = await supabase
         .from('signals')
-        .upsert(rows, {
+        .upsert(deduped, {
           onConflict: 'user_id,ticker,strategy',
           ignoreDuplicates: false,
         });
