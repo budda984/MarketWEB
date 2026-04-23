@@ -7,10 +7,12 @@ import {
   detectFlags,
   detectWedges,
   detectCupHandle,
+  detectDoubleTopBottom,
   type HSPattern,
   type FlagPattern,
   type WedgePattern,
   type CupHandlePattern,
+  type DoublePattern,
 } from '@/lib/patterns';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
 import { evaluateAlerts } from '@/lib/alerts';
@@ -49,6 +51,7 @@ export async function GET(req: Request) {
   let totalFlag = 0;
   let totalWedge = 0;
   let totalCup = 0;
+  let totalDouble = 0;
   let errors = 0;
 
   const allHma: Array<{
@@ -69,6 +72,7 @@ export async function GET(req: Request) {
   const allFlag: Array<{ ticker: string; pattern: FlagPattern; market: string; timestamp: number; details: string }> = [];
   const allWedge: Array<{ ticker: string; pattern: WedgePattern; market: string; timestamp: number; details: string }> = [];
   const allCup: Array<{ ticker: string; pattern: CupHandlePattern; market: string; timestamp: number; details: string }> = [];
+  const allDouble: Array<{ ticker: string; pattern: DoublePattern; market: string; timestamp: number; details: string }> = [];
 
   // Prezzi correnti per ogni ticker (serve per gli alert)
   const currentPrices = new Map<string, number>();
@@ -131,6 +135,11 @@ export async function GET(req: Request) {
           if (p.strength < 2) continue;
           totalCup++;
           allCup.push({ ticker, pattern: p, market, timestamp: ts, details: cupDetails(p) });
+        }
+        for (const p of detectDoubleTopBottom(candlesArr)) {
+          if (p.strength < 2) continue;
+          totalDouble++;
+          allDouble.push({ ticker, pattern: p, market, timestamp: ts, details: doubleDetails(p) });
         }
       }
 
@@ -221,6 +230,21 @@ export async function GET(req: Request) {
       pattern_data: p.pattern,
     });
   }
+  for (const p of allDouble) {
+    rows.push({
+      user_id: null,
+      ticker: p.ticker,
+      strategy: `PATTERN_${p.pattern.type}`,
+      strength: p.pattern.strength,
+      price: p.pattern.lastPrice,
+      details: p.details,
+      signal_at: new Date(p.timestamp * 1000).toISOString(),
+      status: 'ACTIVE',
+      entry_price: p.pattern.lastPrice,
+      market: p.market,
+      pattern_data: p.pattern,
+    });
+  }
 
   if (rows.length > 0) {
     // Dedup del batch: Postgres rifiuta se lo stesso UPSERT tocca due
@@ -272,7 +296,7 @@ export async function GET(req: Request) {
 
   // Telegram
   let telegramSent = 0;
-  const totalPatterns = allHs.length + allFlag.length + allWedge.length + allCup.length;
+  const totalPatterns = allHs.length + allFlag.length + allWedge.length + allCup.length + allDouble.length;
   const hasTriggeredAlerts = alertsByUser.size > 0;
   if (allHma.length > 0 || totalPatterns > 0 || hasTriggeredAlerts) {
     const { data: userSettings } = await admin
@@ -289,6 +313,7 @@ export async function GET(req: Request) {
         const fl = allFlag.filter((x) => x.pattern.strength >= minStr);
         const we = allWedge.filter((x) => x.pattern.strength >= minStr);
         const cu = allCup.filter((x) => x.pattern.strength >= minStr);
+        const db = allDouble.filter((x) => x.pattern.strength >= minStr);
         const triggeredForUser = alertsByUser.get(s.user_id) ?? [];
 
         if (
@@ -297,6 +322,7 @@ export async function GET(req: Request) {
           fl.length === 0 &&
           we.length === 0 &&
           cu.length === 0 &&
+          db.length === 0 &&
           triggeredForUser.length === 0
         ) {
           return false;
@@ -308,8 +334,14 @@ export async function GET(req: Request) {
           parts.push(formatAlertDigest(triggeredForUser));
         }
         if (hma.length > 0) parts.push(formatSignalsDigest(hma));
-        if (hs.length > 0 || fl.length > 0 || we.length > 0 || cu.length > 0) {
-          parts.push(formatPatternDigest(hs, fl, we, cu));
+        if (
+          hs.length > 0 ||
+          fl.length > 0 ||
+          we.length > 0 ||
+          cu.length > 0 ||
+          db.length > 0
+        ) {
+          parts.push(formatPatternDigest(hs, fl, we, cu, db));
         }
 
         return sendTelegramMessage({
@@ -344,6 +376,7 @@ export async function GET(req: Request) {
     flagPatterns: totalFlag,
     wedgePatterns: totalWedge,
     cupPatterns: totalCup,
+    doublePatterns: totalDouble,
     patterns: totalPatterns,
     alertsTriggered: Array.from(alertsByUser.values()).reduce(
       (s, arr) => s + arr.length,
@@ -383,6 +416,22 @@ function cupDetails(p: CupHandlePattern): string {
   }`;
 }
 
+function doubleDetails(p: DoublePattern): string {
+  const label = {
+    DOUBLE_TOP: 'Double Top',
+    DOUBLE_BOTTOM: 'Double Bottom',
+    TRIPLE_TOP: 'Triple Top',
+    TRIPLE_BOTTOM: 'Triple Bottom',
+  }[p.type];
+  const dir = p.direction === 'up' ? '↑ rialzista' : '↓ ribassista';
+  const conf = `conf ${(p.confidence * 100).toFixed(0)}%`;
+  const status =
+    p.breakoutConfirmed && p.breakoutBarsAgo != null
+      ? `breakout ${p.breakoutBarsAgo}d fa`
+      : 'in attesa breakout';
+  return `${label} · ${dir} · neck $${p.neckline.toFixed(2)} · ${conf} · ${status}`;
+}
+
 type PatternLine = {
   ticker: string;
   icon: string;
@@ -398,7 +447,8 @@ function formatPatternDigest(
   hs: Array<{ ticker: string; pattern: HSPattern }>,
   flags: Array<{ ticker: string; pattern: FlagPattern }>,
   wedges: Array<{ ticker: string; pattern: WedgePattern }>,
-  cups: Array<{ ticker: string; pattern: CupHandlePattern }>
+  cups: Array<{ ticker: string; pattern: CupHandlePattern }>,
+  doubles: Array<{ ticker: string; pattern: DoublePattern }> = []
 ): string {
   const all: PatternLine[] = [
     ...hs.map((p) => ({
@@ -438,6 +488,21 @@ function formatPatternDigest(
       price: p.pattern.lastPrice,
       target: p.pattern.target,
       level: p.pattern.breakoutLevel,
+      conf: p.pattern.confidence,
+      strength: p.pattern.strength,
+    })),
+    ...doubles.map((p) => ({
+      ticker: p.ticker,
+      name: {
+        DOUBLE_TOP: 'Double Top',
+        DOUBLE_BOTTOM: 'Double Bottom',
+        TRIPLE_TOP: 'Triple Top',
+        TRIPLE_BOTTOM: 'Triple Bottom',
+      }[p.pattern.type],
+      icon: p.pattern.direction === 'up' ? '⬆️' : '⬇️',
+      price: p.pattern.lastPrice,
+      target: p.pattern.target,
+      level: p.pattern.neckline,
       conf: p.pattern.confidence,
       strength: p.pattern.strength,
     })),

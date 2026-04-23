@@ -1030,3 +1030,306 @@ export function detectCupHandle(
   }
   return deduped;
 }
+
+// ============================================================================
+// DOUBLE / TRIPLE TOP / BOTTOM
+// ============================================================================
+
+export type DoublePattern = {
+  type: 'DOUBLE_TOP' | 'DOUBLE_BOTTOM' | 'TRIPLE_TOP' | 'TRIPLE_BOTTOM';
+  startIdx: number;
+  endIdx: number;
+  keyPoints: Pivot[];
+  neckline: number; // livello di conferma (break neckline = breakout)
+  neckIdx: number; // indice del pivot "valle tra i top" o "picco tra i bottom"
+  direction: 'up' | 'down'; // direzione attesa del movimento post-breakout
+  breakoutConfirmed: boolean;
+  breakoutBarsAgo: number | null;
+  confidence: number;
+  target: number;
+  stopLoss: number;
+  strength: 1 | 2 | 3;
+  lastPrice: number;
+};
+
+type DoubleOpts = {
+  leftBars?: number;
+  rightBars?: number;
+  peakSimilarityMax?: number; // max differenza tra i top/bottom (default 3%)
+  durationMin?: number;
+  durationMax?: number;
+  neckRetracementMin?: number; // la valle/picco intermedio minimo (default 3%)
+  breakoutWindow?: number;
+  minConfidence?: number;
+};
+
+const DEFAULT_DOUBLE_OPTS: Required<DoubleOpts> = {
+  leftBars: 5,
+  rightBars: 5,
+  peakSimilarityMax: 0.03, // 3%
+  durationMin: 15,
+  durationMax: 90,
+  neckRetracementMin: 0.03, // 3%
+  breakoutWindow: 5,
+  minConfidence: 0.7,
+};
+
+/**
+ * Detection di Double/Triple Top e Double/Triple Bottom.
+ *
+ * Double Top: due pivot high di valore simile (±3%), con un pivot low
+ * intermedio (valle). Conferma quando il prezzo rompe la valle al ribasso.
+ *
+ * Double Bottom: speculare. Due pivot low di valore simile con picco
+ * intermedio. Conferma quando il prezzo rompe il picco al rialzo.
+ *
+ * Triple: stessa logica ma con 3 pivot dello stesso tipo.
+ */
+export function detectDoubleTopBottom(
+  candles: OHLCV[],
+  opts: DoubleOpts = {}
+): DoublePattern[] {
+  const o = { ...DEFAULT_DOUBLE_OPTS, ...opts };
+  if (candles.length < o.durationMin + o.rightBars + 10) return [];
+
+  const pivots = findPivots(candles, o.leftBars, o.rightBars);
+  const highs = pivots.filter((p) => p.type === 'high');
+  const lows = pivots.filter((p) => p.type === 'low');
+
+  const results: DoublePattern[] = [];
+  const lastIdx = candles.length - 1;
+  const lastPrice = candles[lastIdx].c;
+
+  // --- Double / Triple TOP ---
+  // Cerco sequenze di 2-3 pivot high consecutivi con prezzi simili.
+  for (let i = 0; i < highs.length - 1; i++) {
+    const h1 = highs[i];
+    // Prima cerco una coppia (double)
+    for (let j = i + 1; j < highs.length; j++) {
+      const h2 = highs[j];
+      const duration = h2.idx - h1.idx;
+      if (duration < o.durationMin) continue;
+      if (duration > o.durationMax) break;
+
+      // Similarità tra i due top
+      const sim = Math.abs(h2.price - h1.price) / Math.max(h1.price, h2.price);
+      if (sim > o.peakSimilarityMax) continue;
+
+      // Deve esserci un low intermedio tra h1 e h2
+      const intermediateLows = lows.filter(
+        (l) => l.idx > h1.idx && l.idx < h2.idx
+      );
+      if (intermediateLows.length === 0) continue;
+
+      // Prendo il low più profondo (il vero "valley")
+      const valley = intermediateLows.reduce((min, l) =>
+        l.price < min.price ? l : min
+      );
+
+      const topAvg = (h1.price + h2.price) / 2;
+      const valleyDepth = (topAvg - valley.price) / topAvg;
+      if (valleyDepth < o.neckRetracementMin) continue;
+
+      // Cerco un eventuale terzo top (triple top) che si aggiunge
+      let thirdTop: Pivot | null = null;
+      for (let k = j + 1; k < highs.length; k++) {
+        const h3 = highs[k];
+        if (h3.idx - h2.idx > o.durationMax) break;
+        if (h3.idx - h2.idx < 5) continue;
+        const sim3 =
+          Math.abs(h3.price - topAvg) / Math.max(topAvg, h3.price);
+        if (sim3 <= o.peakSimilarityMax) {
+          // Deve esserci anche un low tra h2 e h3
+          const midLow = lows.find((l) => l.idx > h2.idx && l.idx < h3.idx);
+          if (midLow && (topAvg - midLow.price) / topAvg >= o.neckRetracementMin / 2) {
+            thirdTop = h3;
+            break;
+          }
+        }
+      }
+
+      const isTriple = thirdTop !== null;
+      const endIdx = isTriple ? thirdTop!.idx : h2.idx;
+
+      // Breakout: il prezzo rompe la valley (neckline) al ribasso?
+      let breakoutConfirmed = false;
+      let breakoutBarsAgo: number | null = null;
+      for (
+        let b = Math.max(endIdx + 1, lastIdx - o.breakoutWindow);
+        b <= lastIdx;
+        b++
+      ) {
+        if (candles[b].c < valley.price) {
+          breakoutConfirmed = true;
+          breakoutBarsAgo = lastIdx - b;
+          break;
+        }
+      }
+
+      const priceAboveNeck = lastPrice > valley.price;
+      // Confidence: similarità dei top + profondità valle + breakout
+      const simScore = 1 - sim / o.peakSimilarityMax; // 1 = perfettamente uguali
+      const depthScore = Math.min(valleyDepth / 0.10, 1); // 0.10 = ottimo
+      const breakoutScore = breakoutConfirmed ? 0.3 : priceAboveNeck ? 0.15 : 0;
+      const tripleBonus = isTriple ? 0.1 : 0;
+      const confidence = Math.min(
+        1,
+        0.35 + simScore * 0.25 + depthScore * 0.2 + breakoutScore + tripleBonus
+      );
+
+      if (confidence < o.minConfidence) continue;
+
+      // Target proiettato: altezza del pattern sotto la neckline
+      const height = topAvg - valley.price;
+      const target = valley.price - height;
+      const stopLoss = topAvg * 1.02; // 2% sopra il top
+
+      const keyPoints: Pivot[] = isTriple
+        ? [h1, valley, h2, thirdTop!]
+        : [h1, valley, h2];
+
+      const strength: 1 | 2 | 3 = breakoutConfirmed
+        ? 3
+        : confidence >= 0.85
+          ? 2
+          : 1;
+
+      results.push({
+        type: isTriple ? 'TRIPLE_TOP' : 'DOUBLE_TOP',
+        startIdx: h1.idx,
+        endIdx,
+        keyPoints,
+        neckline: valley.price,
+        neckIdx: valley.idx,
+        direction: 'down',
+        breakoutConfirmed,
+        breakoutBarsAgo,
+        confidence,
+        target,
+        stopLoss,
+        strength,
+        lastPrice,
+      });
+    }
+  }
+
+  // --- Double / Triple BOTTOM ---
+  for (let i = 0; i < lows.length - 1; i++) {
+    const l1 = lows[i];
+    for (let j = i + 1; j < lows.length; j++) {
+      const l2 = lows[j];
+      const duration = l2.idx - l1.idx;
+      if (duration < o.durationMin) continue;
+      if (duration > o.durationMax) break;
+
+      const sim = Math.abs(l2.price - l1.price) / Math.max(l1.price, l2.price);
+      if (sim > o.peakSimilarityMax) continue;
+
+      const intermediateHighs = highs.filter(
+        (h) => h.idx > l1.idx && h.idx < l2.idx
+      );
+      if (intermediateHighs.length === 0) continue;
+
+      const peak = intermediateHighs.reduce((max, h) =>
+        h.price > max.price ? h : max
+      );
+
+      const botAvg = (l1.price + l2.price) / 2;
+      const peakHeight = (peak.price - botAvg) / botAvg;
+      if (peakHeight < o.neckRetracementMin) continue;
+
+      // Eventuale terzo bottom (triple)
+      let thirdBot: Pivot | null = null;
+      for (let k = j + 1; k < lows.length; k++) {
+        const l3 = lows[k];
+        if (l3.idx - l2.idx > o.durationMax) break;
+        if (l3.idx - l2.idx < 5) continue;
+        const sim3 =
+          Math.abs(l3.price - botAvg) / Math.max(botAvg, l3.price);
+        if (sim3 <= o.peakSimilarityMax) {
+          const midHigh = highs.find(
+            (h) => h.idx > l2.idx && h.idx < l3.idx
+          );
+          if (
+            midHigh &&
+            (midHigh.price - botAvg) / botAvg >= o.neckRetracementMin / 2
+          ) {
+            thirdBot = l3;
+            break;
+          }
+        }
+      }
+
+      const isTriple = thirdBot !== null;
+      const endIdx = isTriple ? thirdBot!.idx : l2.idx;
+
+      // Breakout: prezzo rompe il peak (neckline) al rialzo?
+      let breakoutConfirmed = false;
+      let breakoutBarsAgo: number | null = null;
+      for (
+        let b = Math.max(endIdx + 1, lastIdx - o.breakoutWindow);
+        b <= lastIdx;
+        b++
+      ) {
+        if (candles[b].c > peak.price) {
+          breakoutConfirmed = true;
+          breakoutBarsAgo = lastIdx - b;
+          break;
+        }
+      }
+
+      const priceBelowNeck = lastPrice < peak.price;
+      const simScore = 1 - sim / o.peakSimilarityMax;
+      const depthScore = Math.min(peakHeight / 0.10, 1);
+      const breakoutScore = breakoutConfirmed ? 0.3 : priceBelowNeck ? 0.15 : 0;
+      const tripleBonus = isTriple ? 0.1 : 0;
+      const confidence = Math.min(
+        1,
+        0.35 + simScore * 0.25 + depthScore * 0.2 + breakoutScore + tripleBonus
+      );
+
+      if (confidence < o.minConfidence) continue;
+
+      const height = peak.price - botAvg;
+      const target = peak.price + height;
+      const stopLoss = botAvg * 0.98;
+
+      const keyPoints: Pivot[] = isTriple
+        ? [l1, peak, l2, thirdBot!]
+        : [l1, peak, l2];
+
+      const strength: 1 | 2 | 3 = breakoutConfirmed
+        ? 3
+        : confidence >= 0.85
+          ? 2
+          : 1;
+
+      results.push({
+        type: isTriple ? 'TRIPLE_BOTTOM' : 'DOUBLE_BOTTOM',
+        startIdx: l1.idx,
+        endIdx,
+        keyPoints,
+        neckline: peak.price,
+        neckIdx: peak.idx,
+        direction: 'up',
+        breakoutConfirmed,
+        breakoutBarsAgo,
+        confidence,
+        target,
+        stopLoss,
+        strength,
+        lastPrice,
+      });
+    }
+  }
+
+  // Dedup: se trovo più pattern sovrapposti sullo stesso tipo tengo quello
+  // con confidence più alta
+  const byKey = new Map<string, DoublePattern>();
+  for (const p of results) {
+    const key = `${p.type}|${Math.floor(p.startIdx / 10)}`;
+    const existing = byKey.get(key);
+    if (!existing || p.confidence > existing.confidence) byKey.set(key, p);
+  }
+  return Array.from(byKey.values());
+}

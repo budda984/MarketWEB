@@ -8,10 +8,12 @@ import {
   detectFlags,
   detectWedges,
   detectCupHandle,
+  detectDoubleTopBottom,
   type HSPattern,
   type FlagPattern,
   type WedgePattern,
   type CupHandlePattern,
+  type DoublePattern,
 } from '@/lib/patterns';
 import { MARKETS, type MarketKey, ALL_TICKERS, getMarketForTicker } from '@/lib/tickers';
 import { evaluateAlerts } from '@/lib/alerts';
@@ -60,11 +62,13 @@ export async function POST(req: Request) {
   type FlagRow = { ticker: string; pattern: FlagPattern; candles: OHLCV[] };
   type WedgeRow = { ticker: string; pattern: WedgePattern; candles: OHLCV[] };
   type CupRow = { ticker: string; pattern: CupHandlePattern; candles: OHLCV[] };
+  type DoubleRow = { ticker: string; pattern: DoublePattern; candles: OHLCV[] };
 
   const hsRows: HSRow[] = [];
   const flagRows: FlagRow[] = [];
   const wedgeRows: WedgeRow[] = [];
   const cupRows: CupRow[] = [];
+  const doubleRows: DoubleRow[] = [];
 
   if (includePatterns) {
     for (const [ticker, candles] of Object.entries(candlesByTicker)) {
@@ -81,6 +85,9 @@ export async function POST(req: Request) {
       }
       for (const p of detectCupHandle(candles)) {
         if (p.strength >= 2) cupRows.push({ ticker, pattern: p, candles });
+      }
+      for (const p of detectDoubleTopBottom(candles)) {
+        if (p.strength >= 2) doubleRows.push({ ticker, pattern: p, candles });
       }
     }
   }
@@ -182,6 +189,23 @@ export async function POST(req: Request) {
       });
     }
 
+    for (const { ticker, pattern, candles } of doubleRows) {
+      const last = candles[candles.length - 1];
+      rows.push({
+        user_id: user.id,
+        ticker,
+        strategy: `PATTERN_${pattern.type}`,
+        strength: pattern.strength,
+        price: last.c,
+        details: doubleDetails(pattern),
+        signal_at: new Date(last.t * 1000).toISOString(),
+        status: 'ACTIVE',
+        entry_price: last.c,
+        pattern_data: pattern,
+        market: getMarketForTicker(ticker),
+      });
+    }
+
     if (rows.length > 0) {
       // Dedup del batch prima dell'upsert: Postgres non permette che lo
       // stesso UPSERT tocchi due volte la stessa chiave (user_id, ticker,
@@ -256,7 +280,8 @@ export async function POST(req: Request) {
       hsRows.length +
       flagRows.length +
       wedgeRows.length +
-      cupRows.length,
+      cupRows.length +
+      doubleRows.length,
     scanned: universe.length,
     elapsedMs: elapsed,
     combined: {
@@ -265,6 +290,7 @@ export async function POST(req: Request) {
       flagPatterns: flagRows.length,
       wedgePatterns: wedgeRows.length,
       cupPatterns: cupRows.length,
+      doublePatterns: doubleRows.length,
     },
     alerts: {
       checked: alertResult.checked,
@@ -276,6 +302,7 @@ export async function POST(req: Request) {
       ...flagRows.map((r) => ({ ticker: r.ticker, ...r.pattern })),
       ...wedgeRows.map((r) => ({ ticker: r.ticker, ...r.pattern })),
       ...cupRows.map((r) => ({ ticker: r.ticker, ...r.pattern })),
+      ...doubleRows.map((r) => ({ ticker: r.ticker, ...r.pattern })),
     ],
   });
 }
@@ -322,4 +349,20 @@ function cupDetails(p: CupHandlePattern): string {
       ? `breakout ${p.breakoutBarsAgo}d fa`
       : 'in attesa breakout';
   return `Cup & Handle · ↑ rialzista · ${depth} · ${conf} · ${status}`;
+}
+
+function doubleDetails(p: DoublePattern): string {
+  const label = {
+    DOUBLE_TOP: 'Double Top',
+    DOUBLE_BOTTOM: 'Double Bottom',
+    TRIPLE_TOP: 'Triple Top',
+    TRIPLE_BOTTOM: 'Triple Bottom',
+  }[p.type];
+  const dir = p.direction === 'up' ? '↑ rialzista' : '↓ ribassista';
+  const conf = `conf ${(p.confidence * 100).toFixed(0)}%`;
+  const status =
+    p.breakoutConfirmed && p.breakoutBarsAgo != null
+      ? `breakout ${p.breakoutBarsAgo}d fa`
+      : 'in attesa breakout';
+  return `${label} · ${dir} · neck $${p.neckline.toFixed(2)} · ${conf} · ${status}`;
 }

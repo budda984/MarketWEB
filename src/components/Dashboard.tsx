@@ -24,8 +24,9 @@ import BacktestView from './BacktestView';
 import SettingsView from './SettingsView';
 import WatchlistPanel from './WatchlistPanel';
 import AlertsView from './AlertsView';
+import IndicesView from './IndicesView';
 
-type View = 'chart' | 'signals' | 'backtest' | 'settings' | 'alerts';
+type View = 'chart' | 'signals' | 'backtest' | 'settings' | 'alerts' | 'indices';
 
 type Props = {
   userEmail: string;
@@ -194,6 +195,12 @@ export default function Dashboard({
             label="Avvisi"
           />
           <NavButton
+            active={view === 'indices'}
+            onClick={() => setView('indices')}
+            icon={<TrendingUp className="w-4 h-4" />}
+            label="Indici"
+          />
+          <NavButton
             active={view === 'backtest'}
             onClick={() => setView('backtest')}
             icon={<Zap className="w-4 h-4" />}
@@ -342,6 +349,12 @@ export default function Dashboard({
                   Avvisi
                 </span>
               )}
+              {view === 'indices' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <TrendingUp className="w-4 h-4 flex-shrink-0" />
+                  Indici
+                </span>
+              )}
               {view === 'settings' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <Settings className="w-4 h-4 flex-shrink-0" />
@@ -391,6 +404,7 @@ export default function Dashboard({
             <BacktestView initialMarkets={selectedMarkets} />
           )}
           {view === 'alerts' && <AlertsView onOpenTicker={onOpenTicker} />}
+          {view === 'indices' && <IndicesView onOpenTicker={onOpenTicker} />}
           {view === 'settings' && <SettingsView />}
         </div>
       </main>

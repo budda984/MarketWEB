@@ -32,6 +32,10 @@ type StrategyFilter =
   | 'PATTERN_RISING_WEDGE'
   | 'PATTERN_FALLING_WEDGE'
   | 'PATTERN_CUP_HANDLE'
+  | 'PATTERN_DOUBLE_TOP'
+  | 'PATTERN_DOUBLE_BOTTOM'
+  | 'PATTERN_TRIPLE_TOP'
+  | 'PATTERN_TRIPLE_BOTTOM'
   | 'PATTERNS_ALL';
 
 type PatternData = {
@@ -265,6 +269,26 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
             onClick={() => setStrategy('PATTERN_CUP_HANDLE')}
             label="☕ Cup & Handle"
           />
+          <FilterBtn
+            active={strategy === 'PATTERN_DOUBLE_TOP'}
+            onClick={() => setStrategy('PATTERN_DOUBLE_TOP')}
+            label="🏔️ Double Top"
+          />
+          <FilterBtn
+            active={strategy === 'PATTERN_DOUBLE_BOTTOM'}
+            onClick={() => setStrategy('PATTERN_DOUBLE_BOTTOM')}
+            label="🏞️ Double Bottom"
+          />
+          <FilterBtn
+            active={strategy === 'PATTERN_TRIPLE_TOP'}
+            onClick={() => setStrategy('PATTERN_TRIPLE_TOP')}
+            label="⛰️ Triple Top"
+          />
+          <FilterBtn
+            active={strategy === 'PATTERN_TRIPLE_BOTTOM'}
+            onClick={() => setStrategy('PATTERN_TRIPLE_BOTTOM')}
+            label="🗻 Triple Bottom"
+          />
         </ScrollRow>
       </div>
 
@@ -487,6 +511,22 @@ function PatternRow({
   } else if (s === 'PATTERN_CUP_HANDLE') {
     typeIcon = '☕';
     typeName = 'Cup & Handle';
+    bullish = true;
+  } else if (s === 'PATTERN_DOUBLE_TOP') {
+    typeIcon = '🏔️';
+    typeName = 'Double Top';
+    bullish = false;
+  } else if (s === 'PATTERN_DOUBLE_BOTTOM') {
+    typeIcon = '🏞️';
+    typeName = 'Double Bottom';
+    bullish = true;
+  } else if (s === 'PATTERN_TRIPLE_TOP') {
+    typeIcon = '⛰️';
+    typeName = 'Triple Top';
+    bullish = false;
+  } else if (s === 'PATTERN_TRIPLE_BOTTOM') {
+    typeIcon = '🗻';
+    typeName = 'Triple Bottom';
     bullish = true;
   } else {
     typeIcon = '🎯';
