@@ -13,8 +13,6 @@ import {
 } from 'recharts';
 import {
   Search,
-  LineChart as LineChartIcon,
-  CandlestickChart,
 } from 'lucide-react';
 import { hma, heikinAshi } from '@/lib/indicators';
 import type { OHLCV } from '@/lib/yahoo';
@@ -22,6 +20,7 @@ import { MARKETS, type MarketKey, ALL_TICKERS, getMarketForTicker } from '@/lib/
 import { localSearch } from '@/lib/ticker-names';
 import AlertsPanel from './AlertsPanel';
 import AddToWatchlistButton from './AddToWatchlistButton';
+import LightweightChart from './LightweightChart';
 
 type Props = {
   ticker: string;
@@ -49,7 +48,6 @@ type QuoteData = {
   candles: OHLCV[];
 };
 
-type ChartMode = 'line' | 'candles';
 type Timeframe = '1h' | '4h' | '1d' | '1w';
 
 export default function ChartView({ ticker, onTickerChange }: Props) {
@@ -57,7 +55,6 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [browseMarket, setBrowseMarket] = useState<MarketKey | 'none'>('none');
-  const [chartMode, setChartMode] = useState<ChartMode>('line');
   const [timeframe, setTimeframe] = useState<Timeframe>('1d');
 
   useEffect(() => {
@@ -302,93 +299,15 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
           />
 
           {/* Pannello 1: Linea o Candele + HMA 50 */}
-          <div className="card p-3 sm:p-5">
-            <div className="flex items-center justify-between mb-2 sm:mb-3">
-              <h3 className="text-xs sm:text-sm font-semibold text-brand-muted uppercase tracking-wide">
-                {chartMode === 'line' ? 'Linea' : 'Candlestick'} + Hull MA 50
-              </h3>
-              <div className="flex items-center gap-1 bg-brand-panel rounded p-0.5">
-                <button
-                  onClick={() => setChartMode('line')}
-                  className={`px-2 py-1 rounded text-xs flex items-center gap-1 transition ${
-                    chartMode === 'line'
-                      ? 'bg-brand-green text-black font-semibold'
-                      : 'text-brand-muted hover:text-brand-text'
-                  }`}
-                  title="Vista linea"
-                >
-                  <LineChartIcon className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Linea</span>
-                </button>
-                <button
-                  onClick={() => setChartMode('candles')}
-                  className={`px-2 py-1 rounded text-xs flex items-center gap-1 transition ${
-                    chartMode === 'candles'
-                      ? 'bg-brand-green text-black font-semibold'
-                      : 'text-brand-muted hover:text-brand-text'
-                  }`}
-                  title="Vista candele"
-                >
-                  <CandlestickChart className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Candele</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="h-64 sm:h-80 lg:h-96">
-              {chartMode === 'line' ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={candleRows}>
-                    <CartesianGrid stroke="#1e222d" strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="date"
-                      stroke="#6a6a6a"
-                      tick={{ fontSize: 10 }}
-                      interval="preserveStartEnd"
-                      minTickGap={20}
-                    />
-                    <YAxis
-                      yAxisId="price"
-                      stroke="#6a6a6a"
-                      tick={{ fontSize: 10 }}
-                      domain={['auto', 'auto']}
-                      orientation="right"
-                      width={45}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: '#181818',
-                        border: '1px solid #2a2a2a',
-                        borderRadius: 6,
-                        fontSize: 12,
-                      }}
-                      labelStyle={{ color: '#9a9a9a' }}
-                    />
-                    <Line
-                      yAxisId="price"
-                      type="monotone"
-                      dataKey="close"
-                      stroke="#e5e5e5"
-                      strokeWidth={1.5}
-                      dot={false}
-                      name="Close"
-                    />
-                    <Line
-                      yAxisId="price"
-                      type="monotone"
-                      dataKey="hma"
-                      stroke="#1DB954"
-                      strokeWidth={2}
-                      dot={false}
-                      name="HMA 50"
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              ) : (
-                <CandleChart rows={candleRows} withHMA />
-              )}
-            </div>
-          </div>
+          <LightweightChart
+            ticker={ticker}
+            candles={data.candles}
+            hma={data.candles.map((_, i) => {
+              const closes = data.candles.map((c) => c.c);
+              return hma(closes, 50)[i];
+            })}
+            theme="dark"
+          />
 
           {/* Pannello 2: Heikin Ashi */}
           <div className="card p-3 sm:p-5">
