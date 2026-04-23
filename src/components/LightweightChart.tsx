@@ -69,6 +69,11 @@ export default function LightweightChart({
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const hmaSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  // Ref che punta sempre all'ultima versione di redrawOverlay.
+  // Serve perché le subscribe di lightweight-charts (visibleTimeRangeChange,
+  // crosshair) catturano la funzione al momento della subscribe: senza ref
+  // chiamerebbero sempre la closure vecchia con drawings=[] al primo render.
+  const redrawRef = useRef<() => void>(() => {});
 
   const [tool, setTool] = useState<DrawingTool>(null);
   const [drawings, setDrawings] = useState<Drawing[]>([]);
@@ -137,14 +142,18 @@ export default function LightweightChart({
     const handleResize = () => {
       if (containerRef.current && chart) {
         chart.applyOptions({ width: containerRef.current.clientWidth });
-        redrawOverlay();
+        redrawRef.current();
       }
     };
     window.addEventListener('resize', handleResize);
 
-    // Redraw overlay quando la timescale cambia (pan/zoom)
-    chart.timeScale().subscribeVisibleTimeRangeChange(() => redrawOverlay());
-    chart.subscribeCrosshairMove(() => redrawOverlay());
+    // Redraw overlay quando la timescale cambia (pan/zoom).
+    // Passiamo per redrawRef.current per avere sempre lo state aggiornato
+    // — se chiamassimo redrawOverlay direttamente, la closure sarebbe
+    // fissata a drawings=[] del primo render.
+    chart.timeScale().subscribeVisibleTimeRangeChange(() => redrawRef.current());
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => redrawRef.current());
+    chart.subscribeCrosshairMove(() => redrawRef.current());
 
     return () => {
       window.removeEventListener('resize', handleResize);
@@ -284,25 +293,52 @@ export default function LightweightChart({
     }
   }, [drawings, tool, draftPoints]);
 
-  // Redraw quando drawings o draft cambiano
+  // Redraw quando drawings o draft cambiano + sync ref per le subscribe
   useEffect(() => {
+    redrawRef.current = redrawOverlay;
     redrawOverlay();
   }, [redrawOverlay]);
 
   // ============================================================================
-  // Click handler per aggiungere punti al drawing in corso
+  // Input handler per aggiungere punti al drawing in corso.
+  // Uso pointer events (unificati mouse/touch/pen) con tracking del punto
+  // iniziale: se l'utente ha trascinato (>10px) lo considero un pan, non
+  // un click → ignoro. Solo se è un vero tap aggiungo il punto.
   // ============================================================================
-  const handleChartClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
+  const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!tool) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      pointerDownRef.current = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      };
+    },
+    [tool]
+  );
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
       if (!tool) return;
       const chart = chartRef.current;
       const series = candleSeriesRef.current;
       const container = containerRef.current;
-      if (!chart || !series || !container) return;
+      const start = pointerDownRef.current;
+      if (!chart || !series || !container || !start) return;
 
       const rect = container.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
+
+      // Ignora se l'utente ha trascinato: era un pan non un tap
+      const dx = Math.abs(x - start.x);
+      const dy = Math.abs(y - start.y);
+      pointerDownRef.current = null;
+      if (dx > 10 || dy > 10) return;
 
       const time = chart.timeScale().coordinateToTime(x);
       const price = series.coordinateToPrice(y);
@@ -316,7 +352,6 @@ export default function LightweightChart({
 
       const pointsNeeded = tool === 'LONG' || tool === 'SHORT' ? 3 : 2;
       if (nextDraft.length >= pointsNeeded) {
-        // Completato: creo il drawing
         const newDrawing = buildDrawing(tool, nextDraft);
         if (newDrawing) {
           const next = [...drawings, newDrawing];
@@ -434,7 +469,8 @@ export default function LightweightChart({
       {/* Chart + overlay */}
       <div
         ref={containerRef}
-        onClick={handleChartClick}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
             setTool(null);
@@ -443,7 +479,13 @@ export default function LightweightChart({
         }}
         tabIndex={0}
         className="relative outline-none"
-        style={{ cursor: tool ? 'crosshair' : 'default' }}
+        style={{
+          cursor: tool ? 'crosshair' : 'default',
+          // Quando un tool di disegno è attivo, disabilito il gesto di
+          // pan/zoom touch nativo del browser: altrimenti lightweight-charts
+          // cattura touchmove e il tap non arriva correttamente su mobile.
+          touchAction: tool ? 'none' : 'auto',
+        }}
       >
         <canvas
           ref={overlayCanvasRef}
