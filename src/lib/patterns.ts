@@ -83,16 +83,143 @@ type HSOpts = {
 };
 
 const DEFAULT_OPTS: Required<HSOpts> = {
-  leftBars: 5,
-  rightBars: 5,
-  minConfidence: 0.7,
-  shoulderSymmetryMax: 0.08,
-  necklineSlopeMax: 0.05,
-  headOverShoulderMin: 0.02,
-  durationMin: 10,
+  leftBars: 10,
+  rightBars: 10,
+  minConfidence: 0.82,
+  shoulderSymmetryMax: 0.06,
+  necklineSlopeMax: 0.04,
+  headOverShoulderMin: 0.03,
+  durationMin: 25,
   durationMax: 80,
   breakoutWindow: 5,
 };
+
+// Range scansione per pattern: cerco solo pattern che si completano nelle
+// ultime N candele. Evita di segnalare pattern di mesi fa ormai obsoleti.
+const HS_LOOKBACK = 90;
+
+// ============================================================================
+// HELPERS DI VALIDAZIONE TREND
+// ============================================================================
+// Un pattern di inversione (H&S, Double Top, ecc.) vale SOLO se prima c'era
+// un trend nella direzione "giusta". Senza questa validazione, ogni laterale
+// con piccole oscillazioni viene riconosciuto come "Double Top" o simili.
+// ============================================================================
+
+/**
+ * Verifica che ci sia un trend rialzista nelle `lookbackBars` candele
+ * prima di `idx`. Definito come: prezzo a `idx` superiore al prezzo
+ * `lookbackBars` indietro di almeno `minRise` (default 5%).
+ */
+function hasUptrendBefore(
+  candles: OHLCV[],
+  idx: number,
+  lookbackBars: number,
+  minRise: number
+): boolean {
+  const startIdx = Math.max(0, idx - lookbackBars);
+  if (idx - startIdx < lookbackBars / 2) return false; // troppo poco storico
+  const startPrice = candles[startIdx].c;
+  const endPrice = candles[idx].c;
+  return (endPrice - startPrice) / startPrice >= minRise;
+}
+
+/**
+ * Speculare: verifica downtrend prima di `idx`.
+ */
+function hasDowntrendBefore(
+  candles: OHLCV[],
+  idx: number,
+  lookbackBars: number,
+  minDrop: number
+): boolean {
+  const startIdx = Math.max(0, idx - lookbackBars);
+  if (idx - startIdx < lookbackBars / 2) return false;
+  const startPrice = candles[startIdx].c;
+  const endPrice = candles[idx].c;
+  return (startPrice - endPrice) / startPrice >= minDrop;
+}
+
+/**
+ * Quanto bene una serie di prezzi approssima una parabola y = ax² + bx + c.
+ * Ritorna R² (coefficiente di determinazione): 1 = parabola perfetta,
+ * < 0.65 = forma irregolare. Usato per validare le cup arrotondate.
+ *
+ * Risolve i minimi quadrati per regressione polinomiale di 2° grado
+ * tramite normal equations.
+ */
+function parabolicR2(values: number[]): number {
+  const n = values.length;
+  if (n < 5) return 0;
+
+  // Costruisco le sums per le normal equations [n, sum_x, sum_x2; ...]
+  let sumX = 0,
+    sumX2 = 0,
+    sumX3 = 0,
+    sumX4 = 0;
+  let sumY = 0,
+    sumXY = 0,
+    sumX2Y = 0;
+  for (let i = 0; i < n; i++) {
+    const x = i;
+    const y = values[i];
+    sumX += x;
+    sumX2 += x * x;
+    sumX3 += x * x * x;
+    sumX4 += x * x * x * x;
+    sumY += y;
+    sumXY += x * y;
+    sumX2Y += x * x * y;
+  }
+  // Sistema 3x3:  [n     sumX   sumX2 ] [c]   [sumY  ]
+  //               [sumX  sumX2  sumX3 ] [b] = [sumXY ]
+  //               [sumX2 sumX3  sumX4 ] [a]   [sumX2Y]
+  // Risolvo con Cramer:
+  function det3(m: number[][]): number {
+    return (
+      m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+      m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+      m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    );
+  }
+  const M = [
+    [n, sumX, sumX2],
+    [sumX, sumX2, sumX3],
+    [sumX2, sumX3, sumX4],
+  ];
+  const D = det3(M);
+  if (Math.abs(D) < 1e-9) return 0;
+  const M_c = [
+    [sumY, sumX, sumX2],
+    [sumXY, sumX2, sumX3],
+    [sumX2Y, sumX3, sumX4],
+  ];
+  const M_b = [
+    [n, sumY, sumX2],
+    [sumX, sumXY, sumX3],
+    [sumX2, sumX2Y, sumX4],
+  ];
+  const M_a = [
+    [n, sumX, sumY],
+    [sumX, sumX2, sumXY],
+    [sumX2, sumX3, sumX2Y],
+  ];
+  const c = det3(M_c) / D;
+  const b = det3(M_b) / D;
+  const a = det3(M_a) / D;
+
+  // Calcolo R²
+  const meanY = sumY / n;
+  let ssTot = 0,
+    ssRes = 0;
+  for (let i = 0; i < n; i++) {
+    const yPred = a * i * i + b * i + c;
+    ssTot += (values[i] - meanY) ** 2;
+    ssRes += (values[i] - yPred) ** 2;
+  }
+  if (ssTot === 0) return 0;
+  return Math.max(0, 1 - ssRes / ssTot);
+}
 
 /**
  * Detection di Head & Shoulders (top + inverse).
@@ -127,6 +254,14 @@ export function detectHeadAndShoulders(
     // Durata
     const duration = RS.idx - LS.idx;
     if (duration < opts.durationMin || duration > opts.durationMax) continue;
+
+    // RECENCY: il pattern deve completarsi negli ultimi N candele
+    // altrimenti è obsoleto e non operativo
+    if (lastIdx - RS.idx > HS_LOOKBACK) continue;
+
+    // VALIDAZIONE TREND PRECEDENTE: H&S top richiede uptrend prima di LS
+    // (almeno 20 candele prima, prezzo in crescita)
+    if (!hasUptrendBefore(candles, LS.idx, 20, 0.05)) continue;
 
     // Simmetria spalle
     const shoulderDiff = Math.abs(LS.price - RS.price) / H.price;
@@ -205,6 +340,12 @@ export function detectHeadAndShoulders(
 
     const duration = RS.idx - LS.idx;
     if (duration < opts.durationMin || duration > opts.durationMax) continue;
+
+    // RECENCY
+    if (lastIdx - RS.idx > HS_LOOKBACK) continue;
+
+    // VALIDAZIONE: IHS bottom richiede DOWNTREND prima di LS
+    if (!hasDowntrendBefore(candles, LS.idx, 20, 0.05)) continue;
 
     const shoulderDiff = Math.abs(LS.price - RS.price) / H.price;
     if (shoulderDiff > opts.shoulderSymmetryMax) continue;
@@ -341,16 +482,18 @@ type FlagOpts = {
 };
 
 const DEFAULT_FLAG: Required<FlagOpts> = {
-  poleMinMove: 0.10,
+  poleMinMove: 0.12, // aumentato: pole più decisi, almeno 12%
   poleMinBars: 3,
   poleMaxBars: 8,
-  poleMaxPullback: 0.30,
+  poleMaxPullback: 0.25, // più strict: ritracciamento interno max 25%
   flagMinBars: 5,
   flagMaxBars: 15,
-  flagMaxRetracement: 0.50,
+  flagMaxRetracement: 0.40, // flag deve essere consolidamento stretto, non rimbalzo profondo
   breakoutWindow: 3,
-  minConfidence: 0.7,
+  minConfidence: 0.82,
 };
+
+const FLAG_LOOKBACK = 50;
 
 /**
  * Linear regression sui prezzi y con indici x.
@@ -396,9 +539,10 @@ export function detectFlags(
   const lastIdx = candles.length - 1;
   const lastPrice = candles[lastIdx].c;
 
-  // Scorri all'indietro: per ogni possibile fine-flag, cerca un pole che la precede
-  // Per efficienza, valuto solo flag che finiscono nelle ultime 30 candele
-  const searchFrom = Math.max(opts.poleMaxBars + opts.flagMinBars, lastIdx - 30);
+  // Scansiono solo flag che finiscono nelle ultime 25 candele (~5 settimane).
+  // I flag sono pattern di breve termine: uno vecchio è già stato confermato
+  // o invalidato e non vale più la pena segnalarlo.
+  const searchFrom = Math.max(opts.poleMaxBars + opts.flagMinBars, lastIdx - 25);
 
   for (let flagEnd = searchFrom; flagEnd <= lastIdx; flagEnd++) {
     for (let flagLen = opts.flagMinBars; flagLen <= opts.flagMaxBars; flagLen++) {
@@ -613,15 +757,17 @@ type WedgeOpts = {
 };
 
 const DEFAULT_WEDGE: Required<WedgeOpts> = {
-  leftBars: 5,
-  rightBars: 5,
+  leftBars: 8,
+  rightBars: 8,
   minPivotsEach: 4,
-  durationMin: 25,
+  durationMin: 30,
   durationMax: 80,
-  minR2: 0.7,
-  minConfidence: 0.75,
+  minR2: 0.78,
+  minConfidence: 0.82,
   breakoutWindow: 3,
 };
+
+const WEDGE_LOOKBACK = 100;
 
 export function detectWedges(
   candles: OHLCV[],
@@ -845,20 +991,22 @@ type CupOpts = {
 };
 
 const DEFAULT_CUP: Required<CupOpts> = {
-  cupMinBars: 30,
+  cupMinBars: 35,
   cupMaxBars: 130,
   cupMinDepth: 0.15,
   cupMaxDepth: 0.35,
-  rimTolerance: 0.05,
+  rimTolerance: 0.04, // i due rim devono essere entro il 4% (più strict)
   handleMinBars: 5,
   handleMaxBars: 25,
   handleMinDepth: 0.05,
   handleMaxDepth: 0.15,
-  minConfidence: 0.7,
+  minConfidence: 0.82,
   breakoutWindow: 3,
-  leftBars: 5,
-  rightBars: 5,
+  leftBars: 8,
+  rightBars: 8,
 };
+
+const CUP_LOOKBACK = 130;
 
 export function detectCupHandle(
   candles: OHLCV[],
@@ -889,6 +1037,13 @@ export function detectCupHandle(
       const rimDiff = Math.abs(A.price - C.price) / A.price;
       if (rimDiff > opts.rimTolerance) continue;
 
+      // RECENCY: la cup deve completarsi nelle ultime CUP_LOOKBACK candele
+      if (lastIdx - C.idx > CUP_LOOKBACK) continue;
+
+      // VALIDAZIONE: cup richiede UPTREND prima di A. Una cup è una pausa
+      // in un trend rialzista, non un'inversione qualunque.
+      if (!hasUptrendBefore(candles, A.idx, 30, 0.10)) continue;
+
       // Trova il minimo (pivot low o low assoluto) fra A e C
       const lowsBetween = lows.filter(
         (p) => p.idx > A.idx && p.idx < C.idx
@@ -902,22 +1057,28 @@ export function detectCupHandle(
       const cupDepth = (A.price - B.price) / A.price;
       if (cupDepth < opts.cupMinDepth || cupDepth > opts.cupMaxDepth) continue;
 
-      // Forma arrotondata: calcolo la varianza dei minimi intorno a B.
-      // Se c'è un plateau di minimi simili è una U; se c'è un solo minimo
-      // secco è una V → scarto.
+      // Forma U (non V) — controllo a 3 livelli:
+      // 1. Plateau: ≥ 20% delle candele cup deve essere vicino al minimo (3%)
+      // 2. Bilanciamento: B deve stare circa a metà (asimmetria ≤ 0.4)
+      // 3. Roundness: i prezzi cup devono approssimare una parabola
       const cupCloses: number[] = [];
       for (let k = A.idx; k <= C.idx; k++) cupCloses.push(candles[k].c);
       const cupMin = Math.min(...cupCloses);
-      const thresholdLow = cupMin * 1.03; // 3% sopra il minimo
+      const thresholdLow = cupMin * 1.03;
       const barsNearBottom = cupCloses.filter((c) => c <= thresholdLow).length;
       const bottomFraction = barsNearBottom / cupCloses.length;
-      if (bottomFraction < 0.1) continue; // V shape
+      if (bottomFraction < 0.20) continue; // strict: era 0.1 → V passava facile
 
       // Asimmetria: le due metà del cup dovrebbero avere durata simile
       const halfLen = cupLen / 2;
       const bOffset = B.idx - A.idx;
       const asymmetry = Math.abs(bOffset - halfLen) / halfLen;
-      if (asymmetry > 0.5) continue;
+      if (asymmetry > 0.4) continue;
+
+      // Roundness: fitto i closes con una parabola (regressione di 2° grado)
+      // e calcolo R². Una vera U ha R² ≥ 0.7.
+      const r2 = parabolicR2(cupCloses);
+      if (r2 < 0.65) continue;
 
       // --- HANDLE ---
       // Il manico parte da C e dura handleMinBars..handleMaxBars
@@ -1064,15 +1225,17 @@ type DoubleOpts = {
 };
 
 const DEFAULT_DOUBLE_OPTS: Required<DoubleOpts> = {
-  leftBars: 5,
-  rightBars: 5,
-  peakSimilarityMax: 0.03, // 3%
-  durationMin: 15,
+  leftBars: 10,
+  rightBars: 10,
+  peakSimilarityMax: 0.025, // 2.5% (più strict)
+  durationMin: 25,
   durationMax: 90,
-  neckRetracementMin: 0.03, // 3%
+  neckRetracementMin: 0.05, // 5% (la valle deve essere significativa)
   breakoutWindow: 5,
-  minConfidence: 0.7,
+  minConfidence: 0.82,
 };
+
+const DOUBLE_LOOKBACK = 90;
 
 /**
  * Detection di Double/Triple Top e Double/Triple Bottom.
@@ -1114,6 +1277,12 @@ export function detectDoubleTopBottom(
       // Similarità tra i due top
       const sim = Math.abs(h2.price - h1.price) / Math.max(h1.price, h2.price);
       if (sim > o.peakSimilarityMax) continue;
+
+      // RECENCY: il secondo top deve essere recente
+      if (lastIdx - h2.idx > DOUBLE_LOOKBACK) continue;
+
+      // VALIDAZIONE: Double Top è inversione, richiede uptrend prima di h1
+      if (!hasUptrendBefore(candles, h1.idx, 25, 0.08)) continue;
 
       // Deve esserci un low intermedio tra h1 e h2
       const intermediateLows = lows.filter(
@@ -1224,6 +1393,12 @@ export function detectDoubleTopBottom(
 
       const sim = Math.abs(l2.price - l1.price) / Math.max(l1.price, l2.price);
       if (sim > o.peakSimilarityMax) continue;
+
+      // RECENCY: il secondo bottom deve essere recente
+      if (lastIdx - l2.idx > DOUBLE_LOOKBACK) continue;
+
+      // VALIDAZIONE: Double Bottom è inversione, richiede downtrend prima
+      if (!hasDowntrendBefore(candles, l1.idx, 25, 0.08)) continue;
 
       const intermediateHighs = highs.filter(
         (h) => h.idx > l1.idx && h.idx < l2.idx
