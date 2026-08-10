@@ -15,6 +15,7 @@ import {
   X,
   Bell,
   Radar,
+  Briefcase,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
@@ -27,6 +28,7 @@ import WatchlistPanel from './WatchlistPanel';
 import AlertsView from './AlertsView';
 import IndicesView from './IndicesView';
 import ScreenerView from './ScreenerView';
+import InsiderView from './InsiderView';
 
 type View =
   | 'chart'
@@ -35,7 +37,8 @@ type View =
   | 'settings'
   | 'alerts'
   | 'indices'
-  | 'screener';
+  | 'screener'
+  | 'insider';
 
 type Props = {
   userEmail: string;
@@ -210,6 +213,12 @@ export default function Dashboard({
             label="Screener"
           />
           <NavButton
+            active={view === 'insider'}
+            onClick={() => setView('insider')}
+            icon={<Briefcase className="w-4 h-4" />}
+            label="Insider"
+          />
+          <NavButton
             active={view === 'indices'}
             onClick={() => setView('indices')}
             icon={<TrendingUp className="w-4 h-4" />}
@@ -370,6 +379,12 @@ export default function Dashboard({
                   Screener
                 </span>
               )}
+              {view === 'insider' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <Briefcase className="w-4 h-4 flex-shrink-0" />
+                  Insider
+                </span>
+              )}
               {view === 'indices' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <TrendingUp className="w-4 h-4 flex-shrink-0" />
@@ -426,6 +441,7 @@ export default function Dashboard({
           )}
           {view === 'alerts' && <AlertsView onOpenTicker={onOpenTicker} />}
           {view === 'screener' && <ScreenerView onOpenTicker={onOpenTicker} />}
+          {view === 'insider' && <InsiderView onOpenTicker={onOpenTicker} />}
           {view === 'indices' && <IndicesView onOpenTicker={onOpenTicker} />}
           {view === 'settings' && <SettingsView />}
         </div>
