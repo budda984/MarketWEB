@@ -54,18 +54,26 @@ type ScreenerResult = {
   trendScore: number;
   momentumScore: number;
   pullbackScore: number;
+  discountScore: number;
   totalScore: number;
+  valueInTrendScore: number;
   trendTemplatePass: boolean;
   inPullback: boolean;
 };
 
 type Stats = {
   universeSize: number;
+  downloaded: number;
+  emptyDownloads: number;
+  tooShort: number;
   analyzed: number;
   matching: number;
   returned: number;
   elapsedMs: number;
+  topSectorNames: string[];
 };
+
+type SortMode = 'value' | 'score' | 'momentum';
 
 type Props = {
   onOpenTicker: (ticker: string) => void;
@@ -77,6 +85,9 @@ export default function ScreenerView({ onOpenTicker }: Props) {
   ]);
   const [onlyTrendPass, setOnlyTrendPass] = useState(true);
   const [onlyPullback, setOnlyPullback] = useState(false);
+  const [topSectors, setTopSectors] = useState(3);
+  const [sortBy, setSortBy] = useState<SortMode>('value');
+  const [warning, setWarning] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [sectors, setSectors] = useState<SectorStrength[]>([]);
@@ -93,6 +104,8 @@ export default function ScreenerView({ onOpenTicker }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           markets: selectedMarkets,
+          topSectors,
+          sortBy,
           onlyTrendPass,
           onlyPullback,
           limit: 60,
@@ -111,6 +124,7 @@ export default function ScreenerView({ onOpenTicker }: Props) {
       setSectors(d.sectors ?? []);
       setResults(d.results ?? []);
       setStats(d.stats ?? null);
+      setWarning(d.warning ?? null);
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -169,6 +183,35 @@ export default function ScreenerView({ onOpenTicker }: Props) {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          <label className="flex items-center gap-1.5 text-xs">
+            <span className="text-brand-muted">Settori in testa:</span>
+            <select
+              value={topSectors}
+              onChange={(e) => setTopSectors(Number(e.target.value))}
+              className="input text-xs py-1"
+            >
+              <option value={2}>primi 2</option>
+              <option value={3}>primi 3</option>
+              <option value={4}>primi 4</option>
+              <option value={5}>primi 5</option>
+              <option value={0}>tutti</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs">
+            <span className="text-brand-muted">Ordina per:</span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as SortMode)}
+              className="input text-xs py-1"
+            >
+              <option value="value">Sconto nel trend</option>
+              <option value="score">Punteggio totale</option>
+              <option value="momentum">Momentum</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="flex items-center gap-3 flex-wrap">
           <label className="flex items-center gap-1.5 text-xs cursor-pointer">
             <input
               type="checkbox"
@@ -203,9 +246,20 @@ export default function ScreenerView({ onOpenTicker }: Props) {
         </div>
 
         {stats && !loading && (
-          <div className="text-xs text-brand-muted">
-            {stats.analyzed} analizzati · {stats.matching} corrispondenti ·{' '}
-            {(stats.elapsedMs / 1000).toFixed(1)}s
+          <div className="text-xs text-brand-muted space-y-0.5">
+            <div>
+              Settori: {stats.topSectorNames.join(', ') || '—'}
+            </div>
+            <div>
+              {stats.universeSize} titoli nei settori · {stats.analyzed}{' '}
+              analizzati · {stats.matching} corrispondenti ·{' '}
+              {(stats.elapsedMs / 1000).toFixed(1)}s
+              {stats.emptyDownloads > 0 && (
+                <span className="text-yellow-400">
+                  {' '}· {stats.emptyDownloads} download falliti
+                </span>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -213,6 +267,12 @@ export default function ScreenerView({ onOpenTicker }: Props) {
       {err && (
         <div className="card p-4 border border-brand-down/40 text-sm text-brand-down">
           {err}
+        </div>
+      )}
+
+      {warning && !err && (
+        <div className="card p-3 border border-yellow-400/40 text-xs text-yellow-400">
+          {warning}
         </div>
       )}
 
@@ -308,7 +368,11 @@ export default function ScreenerView({ onOpenTicker }: Props) {
                     </div>
                     <div className="text-xs text-brand-muted mt-0.5 font-mono">
                       {r.price.toFixed(2)} · RSI {r.rsi14?.toFixed(0) ?? '—'} ·{' '}
-                      {r.distFrom52wHigh.toFixed(0)}% dal max
+                      <span className="text-yellow-400">
+                        −{r.distFrom52wHigh.toFixed(0)}% dal max 52w
+                      </span>{' '}
+                      · MA50 {r.distFromMa50 >= 0 ? '+' : ''}
+                      {r.distFromMa50.toFixed(0)}%
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0 hidden sm:block w-16">
@@ -321,15 +385,34 @@ export default function ScreenerView({ onOpenTicker }: Props) {
                       {fmtPct(r.perf3m)}
                     </div>
                   </div>
-                  <ScoreBadge value={r.totalScore} />
+                  <ScoreBadge
+                    value={
+                      sortBy === 'value'
+                        ? r.valueInTrendScore
+                        : sortBy === 'momentum'
+                          ? r.momentumScore
+                          : r.totalScore
+                    }
+                  />
                 </button>
 
                 {expanded === r.ticker && (
                   <div className="px-3 sm:px-4 pb-3 space-y-3 bg-brand-panel/20">
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <MiniScore label="Trend" value={r.trendScore} />
+                      <MiniScore label="Sconto" value={r.discountScore} />
                       <MiniScore label="Momentum" value={r.momentumScore} />
                       <MiniScore label="Pullback" value={r.pullbackScore} />
+                    </div>
+                    <div className="text-xs text-brand-muted">
+                      Sconto nel trend{' '}
+                      <span className="font-mono font-bold text-brand-text">
+                        {r.valueInTrendScore}
+                      </span>{' '}
+                      · Totale{' '}
+                      <span className="font-mono font-bold text-brand-text">
+                        {r.totalScore}
+                      </span>
                     </div>
 
                     <div className="space-y-1">
@@ -387,16 +470,24 @@ export default function ScreenerView({ onOpenTicker }: Props) {
           <Info className="w-3.5 h-3.5" /> Come leggerlo
         </div>
         <p>
-          Il filtro sul trend viene <strong>prima</strong> di quello sull&apos;RSI:
-          un RSI basso su un titolo sotto la MA200 è un titolo che sta
-          scendendo, non un&apos;occasione. Qui l&apos;RSI basso viene considerato
-          solo su titoli che hanno già superato il trend template.
+          <strong>&quot;Sconto&quot; qui non significa &quot;sottovalutato&quot;.</strong>{' '}
+          Il punteggio Sconto misura quanto un titolo è ritracciato rispetto
+          al <em>proprio</em> trend — distanza dal massimo a 52 settimane,
+          posizione rispetto alle medie, compressione dell&apos;RSI. La
+          sottovalutazione in senso fondamentale richiede utili, debito e
+          multipli come il P/E: dati che questo screener non ha.
         </p>
         <p>
-          Lo screening si basa unicamente sul prezzo: non include utili,
-          debito o valutazione. Un titolo con punteggio alto è in salita e
-          in pausa, il che non dice nulla sulla solidità dell&apos;azienda.
-          Sono informazioni per approfondire, non indicazioni operative.
+          Il filtro sul trend viene <strong>prima</strong> di quello
+          sull&apos;RSI: un RSI basso su un titolo sotto la MA200 è un titolo
+          che sta scendendo, non un&apos;occasione. Per lo stesso motivo il
+          punteggio Sconto non premia i ribassi estremi: il massimo è attorno
+          a −15% dal massimo di periodo, mentre −50% viene penalizzato.
+        </p>
+        <p>
+          Un titolo può essere ritracciato per una ragione precisa che il
+          prezzo da solo non rivela. Sono spunti da cui partire per
+          approfondire, non indicazioni operative.
         </p>
       </div>
     </div>

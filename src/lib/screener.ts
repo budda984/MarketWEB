@@ -272,7 +272,15 @@ export type ScreenerResult = {
   trendScore: number; // 0-100, quanti check passati
   momentumScore: number; // 0-100, forza relativa
   pullbackScore: number; // 0-100, quanto è buono il timing d'ingresso
+  /**
+   * 0-100. Quanto il titolo è "a sconto" RISPETTO AL PROPRIO TREND:
+   * distanza dal massimo 52w, posizione vs MA50/MA200, compressione RSI.
+   * NON è sottovalutazione fondamentale (servirebbero utili, P/E, debito).
+   */
+  discountScore: number;
   totalScore: number; // 0-100 composito
+  /** Composito che privilegia lo sconto: trend forte + prezzo ritracciato */
+  valueInTrendScore: number;
 
   /** true se passa il trend template completo (tutti i check strutturali) */
   trendTemplatePass: boolean;
@@ -396,10 +404,61 @@ export function screenTicker(
     }
   }
 
+  // ------------------------------------------------------------------
+  // DISCOUNT SCORE — quanto il titolo è "a sconto" rispetto a sé stesso
+  // ------------------------------------------------------------------
+  // Tre componenti, tutte relative alla storia del titolo:
+  //   a) distanza dal massimo 52 settimane (più è sotto, più è scontato)
+  //   b) posizione rispetto alla MA50 (sotto = sconto, molto sotto = allarme)
+  //   c) compressione RSI (più è basso, più è ipervenduto)
+  //
+  // Il massimo del punteggio NON è al ribasso estremo: un titolo a -60%
+  // dal massimo non è "in saldo", è un titolo che sta crollando. La
+  // curva premia lo sconto moderato (10-25% dal massimo).
+  const discountFromHigh = (() => {
+    const d = distFrom52wHigh;
+    if (d < 3) return 0.1; // sui massimi: nessuno sconto
+    if (d <= 25) return 1 - Math.abs(d - 15) / 15; // ottimo tra 8% e 22%
+    if (d <= 40) return 0.3; // sconto ampio, più rischioso
+    return 0.05; // troppo lontano dai massimi
+  })();
+
+  const discountFromMa = (() => {
+    const d = distFromMa50;
+    if (d > 15) return 0.05; // molto esteso sopra la media
+    if (d > 5) return 0.3;
+    if (d >= -8) return 1 - Math.abs(d - -1) / 9; // ideale attorno alla MA50
+    if (d >= -18) return 0.35;
+    return 0.05; // molto sotto: trend probabilmente rotto
+  })();
+
+  const discountFromRsi = (() => {
+    if (rsi14 == null) return 0.4;
+    if (rsi14 > 70) return 0.05; // ipercomprato
+    if (rsi14 > 55) return 0.3;
+    if (rsi14 >= 35) return 1 - Math.abs(rsi14 - 43) / 20; // fascia ideale
+    if (rsi14 >= 25) return 0.4;
+    return 0.15; // sotto 25 in un uptrend è anomalo
+  })();
+
+  const discountScore = Math.round(
+    clamp01(
+      discountFromHigh * 0.4 + discountFromMa * 0.35 + discountFromRsi * 0.25
+    ) * 100
+  );
+
   // Score totale: il trend pesa di più perché è il filtro di sopravvivenza,
   // il pullback è solo timing.
   const totalScore = Math.round(
     trendScore * 0.4 + momentumScore * 0.35 + pullbackScore * 0.25
+  );
+
+  // "Valore dentro il trend": privilegia titoli strutturalmente solidi che
+  // però adesso sono ritracciati. Il trend resta un requisito (peso 45%),
+  // ma lo sconto pesa più del momentum — cerchiamo chi è sceso, non chi
+  // sta correndo.
+  const valueInTrendScore = Math.round(
+    trendScore * 0.45 + discountScore * 0.4 + momentumScore * 0.15
   );
 
   return {
@@ -425,7 +484,9 @@ export function screenTicker(
     trendScore,
     momentumScore,
     pullbackScore,
+    discountScore,
     totalScore,
+    valueInTrendScore,
     trendTemplatePass,
     inPullback,
   };
