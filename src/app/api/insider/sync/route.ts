@@ -53,18 +53,82 @@ export async function POST(req: Request) {
       ].map((t) => t.toUpperCase())
     );
 
-    // Mappa ticker -> CIK, poi la inverto: mi serve CIK -> ticker perche'
-    // l'indice giornaliero elenca i CIK, non i simboli.
-    const tickerMap = await fetchTickerCikMap();
-    const cikToTicker = new Map<string, string>();
-    for (const t of universe) {
-      const entry = tickerMap.get(t);
-      if (entry) cikToTicker.set(entry.cik, entry.ticker);
+    // ------------------------------------------------------------------
+    // Mappa CIK -> ticker.
+    // La mappa ufficiale sta su un endpoint protetto che restituisce 403
+    // quando l'IP e' sotto limitazione: la teniamo in cache su Supabase e
+    // la riscarichiamo solo se manca o ha piu' di 30 giorni.
+    // ------------------------------------------------------------------
+    const CACHE_KEY = 'ticker_cik_map';
+    const CACHE_MAX_AGE_MS = 30 * 86400 * 1000;
+
+    let cikToTicker = new Map<string, string>();
+    let mapSource = 'cache';
+
+    const { data: cached } = await admin
+      .from('sec_cache')
+      .select('value, updated_at')
+      .eq('key', CACHE_KEY)
+      .maybeSingle();
+
+    const cacheAge = cached?.updated_at
+      ? Date.now() - new Date(cached.updated_at).getTime()
+      : Infinity;
+    const cacheUsable =
+      cached?.value && Object.keys(cached.value).length > 0;
+
+    if (cacheUsable && cacheAge < CACHE_MAX_AGE_MS) {
+      for (const [cik, tk] of Object.entries(
+        cached.value as Record<string, string>
+      )) {
+        cikToTicker.set(cik, tk);
+      }
+    } else {
+      // Cache assente o scaduta: provo a riscaricarla
+      try {
+        const tickerMap = await fetchTickerCikMap();
+        for (const t of universe) {
+          const entry = tickerMap.get(t);
+          if (entry) cikToTicker.set(entry.cik, entry.ticker);
+        }
+        mapSource = 'sec';
+        if (cikToTicker.size > 0) {
+          await admin.from('sec_cache').upsert(
+            {
+              key: CACHE_KEY,
+              value: Object.fromEntries(cikToTicker),
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'key' }
+          );
+        }
+      } catch (e) {
+        // Se il download fallisce ma ho una cache vecchia, la uso
+        // comunque: i CIK non cambiano praticamente mai.
+        if (cacheUsable) {
+          for (const [cik, tk] of Object.entries(
+            cached!.value as Record<string, string>
+          )) {
+            cikToTicker.set(cik, tk);
+          }
+          mapSource = 'cache-scaduta';
+        } else {
+          const msg = e instanceof Error ? e.message : String(e);
+          return NextResponse.json(
+            {
+              error: msg.includes('SEC_RATE_LIMITED')
+                ? 'La SEC sta limitando le richieste da questo indirizzo (403). Aspetta qualche minuto e riprova: al primo tentativo riuscito la mappa viene salvata in cache e il problema non si ripresenta.'
+                : `Impossibile costruire la mappa ticker/CIK: ${msg}`,
+            },
+            { status: 503 }
+          );
+        }
+      }
     }
 
     if (cikToTicker.size === 0) {
       return NextResponse.json(
-        { error: 'Nessuna corrispondenza ticker/CIK: EDGAR irraggiungibile?' },
+        { error: 'Mappa ticker/CIK vuota: nessun emittente da monitorare.' },
         { status: 503 }
       );
     }
@@ -186,6 +250,7 @@ export async function POST(req: Request) {
       dbErrors: dbErrors.length > 0 ? dbErrors : undefined,
       stats: {
         daysProcessed,
+        mapSource,
         issuersTracked: cikToTicker.size,
         filingsSeen,
         filingsMatched,

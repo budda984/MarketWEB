@@ -17,10 +17,17 @@
 const UA = 'MarketMonitorPro/1.0 (budda984@gmail.com)';
 const SEC_BASE = 'https://www.sec.gov';
 
-/** Pausa fra le richieste per restare sotto i 10/sec di EDGAR. */
-const REQUEST_DELAY_MS = 130;
+/**
+ * Pausa fra le richieste. EDGAR consente 10 req/s, ma l'IP di uscita di
+ * Vercel e' condiviso con altri tenant che possono a loro volta
+ * interrogare la SEC: stare a ~5 req/s lascia margine ed evita i 403.
+ */
+const REQUEST_DELAY_MS = 200;
 
-async function secFetch(url: string, timeoutMs = 15000): Promise<Response> {
+async function secFetchOnce(
+  url: string,
+  timeoutMs: number
+): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -28,6 +35,8 @@ async function secFetch(url: string, timeoutMs = 15000): Promise<Response> {
       headers: {
         'User-Agent': UA,
         'Accept-Encoding': 'gzip, deflate',
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
       },
       signal: ctrl.signal,
       cache: 'no-store',
@@ -35,6 +44,26 @@ async function secFetch(url: string, timeoutMs = 15000): Promise<Response> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Come secFetchOnce ma ritenta su 403/429 con attesa crescente.
+ * La SEC limita per IP: quando succede, aspettare qualche secondo
+ * di solito basta.
+ */
+async function secFetch(
+  url: string,
+  timeoutMs = 15000,
+  retries = 2
+): Promise<Response> {
+  let res = await secFetchOnce(url, timeoutMs);
+  let attempt = 0;
+  while ((res.status === 403 || res.status === 429) && attempt < retries) {
+    await sleep(1200 * Math.pow(2, attempt)); // 1.2s, poi 2.4s
+    attempt++;
+    res = await secFetchOnce(url, timeoutMs);
+  }
+  return res;
 }
 
 function sleep(ms: number) {
@@ -53,6 +82,11 @@ export type TickerCik = { ticker: string; cik: string; name: string };
  */
 export async function fetchTickerCikMap(): Promise<Map<string, TickerCik>> {
   const res = await secFetch(`${SEC_BASE}/files/company_tickers.json`);
+  if (res.status === 403 || res.status === 429) {
+    throw new Error(
+      'SEC_RATE_LIMITED: la SEC sta limitando le richieste da questo indirizzo.'
+    );
+  }
   if (!res.ok) throw new Error(`company_tickers.json HTTP ${res.status}`);
   const json = (await res.json()) as Record<
     string,
