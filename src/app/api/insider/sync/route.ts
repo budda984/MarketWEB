@@ -75,6 +75,7 @@ export async function POST(req: Request) {
     let parsed = 0;
     let inserted = 0;
     const daysProcessed: string[] = [];
+    const dbErrors: string[] = [];
 
     for (const date of dates) {
       // Margine di sicurezza sui 60s: mi fermo prima di essere ucciso
@@ -150,12 +151,39 @@ export async function POST(req: Request) {
             onConflict: 'accession,row_idx',
             ignoreDuplicates: false,
           });
-        if (!error) inserted += deduped.length;
+        if (error) {
+          if (!dbErrors.includes(error.message)) dbErrors.push(error.message);
+        } else {
+          inserted += deduped.length;
+        }
       }
+    }
+
+    if (inserted === 0 && dbErrors.length > 0) {
+      const missingTable = dbErrors.some(
+        (m) => m.includes('insider_trades') && /schema cache|does not exist/i.test(m)
+      );
+      return NextResponse.json(
+        {
+          error: missingTable
+            ? "La tabella insider_trades non esiste ancora. Esegui la migration 005_insider_trades.sql nell'SQL Editor di Supabase, poi riprova."
+            : `Scrittura nel database fallita: ${dbErrors[0]}`,
+          stats: {
+            daysProcessed,
+            filingsSeen,
+            filingsMatched,
+            filingsParsed: parsed,
+            rowsUpserted: 0,
+            elapsedMs: Date.now() - t0,
+          },
+        },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
       ok: true,
+      dbErrors: dbErrors.length > 0 ? dbErrors : undefined,
       stats: {
         daysProcessed,
         issuersTracked: cikToTicker.size,
