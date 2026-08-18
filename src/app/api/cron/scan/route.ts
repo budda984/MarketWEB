@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { yahooDownloadMany } from '@/lib/yahoo';
+import { yahooDownloadMany, type OHLCV } from '@/lib/yahoo';
 import { scanTickers } from '@/lib/signals';
 import {
   detectHeadAndShoulders,
@@ -16,6 +16,12 @@ import {
 } from '@/lib/patterns';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
 import { evaluateAlerts } from '@/lib/alerts';
+import {
+  evaluateRuleForTicker,
+  formatAutoAlertLine,
+  type AutoAlertRule,
+  type RuleEvaluation,
+} from '@/lib/auto-alerts';
 import { sendTelegramMessage, formatSignalsDigest } from '@/lib/telegram';
 
 export const runtime = 'nodejs';
@@ -76,6 +82,9 @@ export async function GET(req: Request) {
 
   // Prezzi correnti per ogni ticker (serve per gli alert)
   const currentPrices = new Map<string, number>();
+  // Candele di tutti i mercati scansionati: servono alle regole
+  // automatiche, che riusano questi dati senza riscaricare.
+  const allCandles = new Map<string, OHLCV[]>();
 
   const marketsCompleted: string[] = [];
   const marketsSkipped: string[] = [];
@@ -90,6 +99,7 @@ export async function GET(req: Request) {
     try {
       // 6 mesi di dati per pattern più lunghi (Cup può arrivare a 130 candele + 25 handle)
       const candles = await yahooDownloadMany(tickers, '6mo', '1d', 15);
+      for (const [tk, arr] of Object.entries(candles)) allCandles.set(tk, arr);
       const found = await scanTickers(candles, 1);
       totalScanned += tickers.length;
       totalSignals += found.length;
@@ -294,11 +304,108 @@ export async function GET(req: Request) {
   const alertResult = await evaluateAlerts(admin, currentPrices);
   const alertsByUser = alertResult.byUser;
 
+  // ============================================================
+  // Regole automatiche sui minimi di periodo
+  // ============================================================
+  // Riusa le candele gia' scaricate dal cron: nessun download extra.
+  // I titoli non presenti in questo giro vengono semplicemente saltati
+  // e valutati alla prossima esecuzione.
+  const autoLinesByUser = new Map<string, string[]>();
+  let autoNewHits = 0;
+  let autoSkippedLookback = 0;
+
+  try {
+    const { data: activeRules } = await admin
+      .from('auto_alert_rules')
+      .select('*')
+      .eq('active', true);
+
+    for (const rule of (activeRules ?? []) as AutoAlertRule[]) {
+      const universe =
+        (MARKETS[rule.market as MarketKey] as readonly string[]) ?? [];
+      if (universe.length === 0) continue;
+
+      // Il cron scarica 6 mesi di candele: una finestra piu' lunga non e'
+      // calcolabile con questi dati. Quelle regole restano da eseguire a
+      // mano dalla vista, che scarica 1-2 anni.
+      if (rule.lookback_days > 126) {
+        autoSkippedLookback++;
+        continue;
+      }
+
+      const { data: existing } = await admin
+        .from('auto_alert_hits')
+        .select('id, ticker, state')
+        .eq('rule_id', rule.id)
+        .eq('state', 'armed');
+      const armed = new Map<string, string>();
+      for (const h of existing ?? []) armed.set(h.ticker, h.id);
+
+      const fresh: RuleEvaluation[] = [];
+      const toClear: string[] = [];
+
+      for (const ticker of universe) {
+        const c = allCandles.get(ticker);
+        if (!c || c.length === 0) continue;
+        const ev = evaluateRuleForTicker(ticker, c, rule);
+        if (!ev) continue;
+        const isArmed = armed.has(ticker);
+        if (ev.inZone && !ev.excludedFreefall) {
+          if (!isArmed) fresh.push(ev);
+        } else if (isArmed && ev.aboveRearm) {
+          toClear.push(armed.get(ticker)!);
+        }
+      }
+
+      if (fresh.length > 0) {
+        const { error } = await admin.from('auto_alert_hits').upsert(
+          fresh.map((e) => ({
+            rule_id: rule.id,
+            user_id: rule.user_id,
+            ticker: e.ticker,
+            price: e.price,
+            period_low: e.periodLow,
+            threshold: e.threshold,
+            pct_above_low: e.pctAboveLow,
+            drop_from_high_pct: e.dropFromHighPct,
+            state: 'armed',
+          })),
+          { onConflict: 'rule_id,ticker,state', ignoreDuplicates: false }
+        );
+        if (!error) {
+          autoNewHits += fresh.length;
+          if (rule.notify_telegram) {
+            const lines = autoLinesByUser.get(rule.user_id) ?? [];
+            lines.push(
+              `<b>${rule.name || rule.market}</b> — minimo ${rule.lookback_days}g +${rule.threshold_pct}%`,
+              ...fresh
+                .sort((a, b) => a.pctAboveLow - b.pctAboveLow)
+                .slice(0, 12)
+                .map((e) => `• ${formatAutoAlertLine(e)}`)
+            );
+            if (fresh.length > 12) lines.push(`… e altri ${fresh.length - 12}`);
+            autoLinesByUser.set(rule.user_id, lines);
+          }
+        }
+      }
+
+      if (toClear.length > 0) {
+        await admin
+          .from('auto_alert_hits')
+          .update({ state: 'cleared', cleared_at: new Date().toISOString() })
+          .in('id', toClear);
+      }
+    }
+  } catch {
+    // Le regole automatiche non devono far fallire l'intero cron
+  }
+
   // Telegram
   let telegramSent = 0;
   const totalPatterns = allHs.length + allFlag.length + allWedge.length + allCup.length + allDouble.length;
   const hasTriggeredAlerts = alertsByUser.size > 0;
-  if (allHma.length > 0 || totalPatterns > 0 || hasTriggeredAlerts) {
+  const hasAutoHits = autoLinesByUser.size > 0;
+  if (allHma.length > 0 || totalPatterns > 0 || hasTriggeredAlerts || hasAutoHits) {
     const { data: userSettings } = await admin
       .from('user_settings')
       .select('user_id, telegram_bot_token, telegram_chat_id, min_strength')
@@ -323,13 +430,20 @@ export async function GET(req: Request) {
           we.length === 0 &&
           cu.length === 0 &&
           db.length === 0 &&
-          triggeredForUser.length === 0
+          triggeredForUser.length === 0 &&
+          (autoLinesByUser.get(s.user_id) ?? []).length === 0
         ) {
           return false;
         }
 
         const parts: string[] = [];
         // Priorità: alert in cima (sono i più urgenti)
+        const autoLines = autoLinesByUser.get(s.user_id) ?? [];
+        if (autoLines.length > 0) {
+          parts.push(
+            `🎯 <b>Titoli vicini ai minimi</b>\n\n${autoLines.join('\n')}`
+          );
+        }
         if (triggeredForUser.length > 0) {
           parts.push(formatAlertDigest(triggeredForUser));
         }
@@ -378,6 +492,8 @@ export async function GET(req: Request) {
     cupPatterns: totalCup,
     doublePatterns: totalDouble,
     patterns: totalPatterns,
+    autoRuleHits: autoNewHits,
+    autoRulesSkippedLookback: autoSkippedLookback,
     alertsTriggered: Array.from(alertsByUser.values()).reduce(
       (s, arr) => s + arr.length,
       0

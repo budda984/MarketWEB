@@ -9,6 +9,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { MARKETS, type MarketKey, getMarketForTicker } from '@/lib/tickers';
+import AutoRulesPanel from './AutoRulesPanel';
 
 type Alert = {
   id: string;
@@ -30,6 +31,7 @@ type Props = {
 export default function AlertsView({ onOpenTicker }: Props) {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<'manual' | 'auto'>('manual');
   const [marketFilter, setMarketFilter] = useState<MarketKey | 'all' | 'unknown'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'triggered'>('all');
 
@@ -110,6 +112,34 @@ export default function AlertsView({ onOpenTicker }: Props) {
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
+      {/* Selettore sezione */}
+      <div className="flex items-center gap-1 bg-brand-panel rounded p-0.5 w-fit">
+        <button
+          onClick={() => setTab('manual')}
+          className={`px-3 py-1.5 rounded text-xs font-medium transition ${
+            tab === 'manual'
+              ? 'bg-brand-green text-black'
+              : 'text-brand-muted hover:text-brand-text'
+          }`}
+        >
+          Avvisi manuali
+        </button>
+        <button
+          onClick={() => setTab('auto')}
+          className={`px-3 py-1.5 rounded text-xs font-medium transition ${
+            tab === 'auto'
+              ? 'bg-brand-green text-black'
+              : 'text-brand-muted hover:text-brand-text'
+          }`}
+        >
+          Regole automatiche
+        </button>
+      </div>
+
+      {tab === 'auto' && <AutoRulesPanel onOpenTicker={onOpenTicker} />}
+
+      {tab === 'manual' && (
+      <>
       {/* Header + stats */}
       <div className="card p-3 sm:p-4">
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -232,6 +262,8 @@ export default function AlertsView({ onOpenTicker }: Props) {
             />
           ))}
         </div>
+      )}
+      </>
       )}
     </div>
   );
