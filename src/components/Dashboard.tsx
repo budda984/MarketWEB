@@ -16,6 +16,7 @@ import {
   Bell,
   Radar,
   Briefcase,
+  Sunrise,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
@@ -29,6 +30,7 @@ import AlertsView from './AlertsView';
 import IndicesView from './IndicesView';
 import ScreenerView from './ScreenerView';
 import InsiderView from './InsiderView';
+import MoversView from './MoversView';
 
 type View =
   | 'chart'
@@ -38,7 +40,8 @@ type View =
   | 'alerts'
   | 'indices'
   | 'screener'
-  | 'insider';
+  | 'insider'
+  | 'movers';
 
 type Props = {
   userEmail: string;
@@ -219,6 +222,12 @@ export default function Dashboard({
             label="Insider"
           />
           <NavButton
+            active={view === 'movers'}
+            onClick={() => setView('movers')}
+            icon={<Sunrise className="w-4 h-4" />}
+            label="Top mover"
+          />
+          <NavButton
             active={view === 'indices'}
             onClick={() => setView('indices')}
             icon={<TrendingUp className="w-4 h-4" />}
@@ -385,6 +394,12 @@ export default function Dashboard({
                   Insider
                 </span>
               )}
+              {view === 'movers' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <Sunrise className="w-4 h-4 flex-shrink-0" />
+                  Top mover
+                </span>
+              )}
               {view === 'indices' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <TrendingUp className="w-4 h-4 flex-shrink-0" />
@@ -442,6 +457,7 @@ export default function Dashboard({
           {view === 'alerts' && <AlertsView onOpenTicker={onOpenTicker} />}
           {view === 'screener' && <ScreenerView onOpenTicker={onOpenTicker} />}
           {view === 'insider' && <InsiderView onOpenTicker={onOpenTicker} />}
+          {view === 'movers' && <MoversView onOpenTicker={onOpenTicker} />}
           {view === 'indices' && <IndicesView onOpenTicker={onOpenTicker} />}
           {view === 'settings' && <SettingsView />}
         </div>

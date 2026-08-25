@@ -211,3 +211,194 @@ export async function yahooQuoteFull(
     longName,
   };
 }
+
+// ============================================================================
+// SESSIONI ESTESE (pre-market e after-hours)
+// ============================================================================
+
+/**
+ * Quotazione nelle sessioni fuori orario.
+ *
+ * Yahoo non espone dai datacenter l'endpoint screener con le classifiche
+ * gia' pronte, ma /v8/finance/chart/ con includePrePost=true restituisce
+ * nel blocco meta i prezzi delle sessioni estese: le classifiche le
+ * calcoliamo noi.
+ *
+ * Il pre-market USA va dalle 4:00 alle 9:30 ET, l'after-hours dalle
+ * 16:00 alle 20:00 ET. Fuori da queste finestre i campi sono assenti e
+ * la funzione ritorna session 'none'.
+ */
+export type ExtendedQuote = {
+  ticker: string;
+  session: 'pre' | 'post' | 'regular' | 'none';
+  /** Prezzo della sessione estesa, o l'ultimo regolare se non disponibile */
+  price: number;
+  /** Riferimento su cui e' calcolata la variazione */
+  previousClose: number;
+  changePct: number;
+  /** Volume scambiato nella sessione estesa, quando disponibile */
+  extendedVolume: number | null;
+  currency?: string;
+  exchangeName?: string;
+  /** Momento del dato, secondi unix */
+  quoteTime: number | null;
+};
+
+type ChartMetaExtended = {
+  currency?: string;
+  fullExchangeName?: string;
+  exchangeName?: string;
+  regularMarketPrice?: number;
+  previousClose?: number;
+  chartPreviousClose?: number;
+  regularMarketTime?: number;
+  preMarketPrice?: number;
+  preMarketChangePercent?: number;
+  preMarketTime?: number;
+  postMarketPrice?: number;
+  postMarketChangePercent?: number;
+  postMarketTime?: number;
+};
+
+export async function yahooExtendedQuote(
+  ticker: string,
+  timeoutMs = 12000
+): Promise<ExtendedQuote | null> {
+  const url =
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
+    `?range=1d&interval=5m&includePrePost=true`;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': UA, Accept: 'application/json' },
+      signal: ctrl.signal,
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text) return null;
+
+    const json = JSON.parse(text) as {
+      chart?: {
+        result?: Array<{
+          meta?: ChartMetaExtended;
+          timestamp?: number[];
+          indicators?: {
+            quote?: Array<{ volume?: (number | null)[] }>;
+          };
+        }>;
+      };
+    };
+
+    const r = json?.chart?.result?.[0];
+    const meta = r?.meta;
+    if (!meta) return null;
+
+    const regular = meta.regularMarketPrice;
+    const prevClose = meta.previousClose ?? meta.chartPreviousClose;
+    if (regular == null || prevClose == null || prevClose <= 0) return null;
+
+    // Il pre-market si confronta con la chiusura regolare precedente;
+    // l'after-hours con la chiusura di oggi.
+    if (meta.preMarketPrice != null && meta.preMarketPrice > 0) {
+      const base = regular;
+      return {
+        ticker,
+        session: 'pre',
+        price: meta.preMarketPrice,
+        previousClose: base,
+        changePct:
+          meta.preMarketChangePercent != null
+            ? meta.preMarketChangePercent
+            : ((meta.preMarketPrice - base) / base) * 100,
+        extendedVolume: extendedVolume(r, meta.regularMarketTime),
+        currency: meta.currency,
+        exchangeName: meta.fullExchangeName ?? meta.exchangeName,
+        quoteTime: meta.preMarketTime ?? null,
+      };
+    }
+
+    if (meta.postMarketPrice != null && meta.postMarketPrice > 0) {
+      return {
+        ticker,
+        session: 'post',
+        price: meta.postMarketPrice,
+        previousClose: regular,
+        changePct:
+          meta.postMarketChangePercent != null
+            ? meta.postMarketChangePercent
+            : ((meta.postMarketPrice - regular) / regular) * 100,
+        extendedVolume: extendedVolume(r, meta.regularMarketTime),
+        currency: meta.currency,
+        exchangeName: meta.fullExchangeName ?? meta.exchangeName,
+        quoteTime: meta.postMarketTime ?? null,
+      };
+    }
+
+    // Nessuna sessione estesa in corso: ritorno il dato regolare
+    return {
+      ticker,
+      session: 'regular',
+      price: regular,
+      previousClose: prevClose,
+      changePct: ((regular - prevClose) / prevClose) * 100,
+      extendedVolume: null,
+      currency: meta.currency,
+      exchangeName: meta.fullExchangeName ?? meta.exchangeName,
+      quoteTime: meta.regularMarketTime ?? null,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Somma il volume delle candele successive alla chiusura regolare. */
+function extendedVolume(
+  r: {
+    timestamp?: number[];
+    indicators?: { quote?: Array<{ volume?: (number | null)[] }> };
+  },
+  regularMarketTime?: number
+): number | null {
+  const ts = r.timestamp;
+  const vols = r.indicators?.quote?.[0]?.volume;
+  if (!ts || !vols || ts.length !== vols.length) return null;
+
+  let total = 0;
+  let seen = false;
+  for (let i = 0; i < ts.length; i++) {
+    const v = vols[i];
+    if (v == null) continue;
+    // Se conosco l'orario di chiusura regolare conto solo il dopo,
+    // altrimenti sommo tutto quello disponibile.
+    if (regularMarketTime != null && ts[i] <= regularMarketTime) continue;
+    total += v;
+    seen = true;
+  }
+  return seen ? total : null;
+}
+
+/** Versione parallela con concorrenza limitata. */
+export async function yahooExtendedQuoteMany(
+  tickers: readonly string[],
+  concurrency = 8
+): Promise<Record<string, ExtendedQuote>> {
+  const out: Record<string, ExtendedQuote> = {};
+  let idx = 0;
+  async function worker() {
+    while (idx < tickers.length) {
+      const i = idx++;
+      const t = tickers[i];
+      const q = await yahooExtendedQuote(t);
+      if (q) out[t] = q;
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, tickers.length) }, worker)
+  );
+  return out;
+}
