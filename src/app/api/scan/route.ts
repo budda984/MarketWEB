@@ -41,7 +41,9 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as Body;
   const minStrength = (body.minStrength ?? 1) as SignalStrength;
   const persist = body.persist ?? false;
-  const includePatterns = body.includePatterns ?? true;
+  // I pattern non vengono piu' generati: il rilevamento si e' rivelato
+  // troppo impreciso per essere utile. Restano attivabili esplicitamente.
+  const includePatterns = body.includePatterns === true;
 
   let universe: string[];
   if (body.tickers && body.tickers.length > 0) {

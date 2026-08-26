@@ -229,66 +229,6 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
             onClick={() => setStrategy('HMA50_HA')}
             label={`📊 HMA+HA (${signals.length - patternCount})`}
           />
-          <FilterBtn
-            active={strategy === 'PATTERNS_ALL'}
-            onClick={() => setStrategy('PATTERNS_ALL')}
-            label={`🎯 Pattern (${patternCount})`}
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_HS'}
-            onClick={() => setStrategy('PATTERN_HS')}
-            label="📉 H&S"
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_IHS'}
-            onClick={() => setStrategy('PATTERN_IHS')}
-            label="📈 Inv. H&S"
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_BULL_FLAG'}
-            onClick={() => setStrategy('PATTERN_BULL_FLAG')}
-            label="🚩 Bull Flag"
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_BEAR_FLAG'}
-            onClick={() => setStrategy('PATTERN_BEAR_FLAG')}
-            label="🏳 Bear Flag"
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_RISING_WEDGE'}
-            onClick={() => setStrategy('PATTERN_RISING_WEDGE')}
-            label="🔻 Rising Wedge"
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_FALLING_WEDGE'}
-            onClick={() => setStrategy('PATTERN_FALLING_WEDGE')}
-            label="🔺 Falling Wedge"
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_CUP_HANDLE'}
-            onClick={() => setStrategy('PATTERN_CUP_HANDLE')}
-            label="☕ Cup & Handle"
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_DOUBLE_TOP'}
-            onClick={() => setStrategy('PATTERN_DOUBLE_TOP')}
-            label="🏔️ Double Top"
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_DOUBLE_BOTTOM'}
-            onClick={() => setStrategy('PATTERN_DOUBLE_BOTTOM')}
-            label="🏞️ Double Bottom"
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_TRIPLE_TOP'}
-            onClick={() => setStrategy('PATTERN_TRIPLE_TOP')}
-            label="⛰️ Triple Top"
-          />
-          <FilterBtn
-            active={strategy === 'PATTERN_TRIPLE_BOTTOM'}
-            onClick={() => setStrategy('PATTERN_TRIPLE_BOTTOM')}
-            label="🗻 Triple Bottom"
-          />
         </ScrollRow>
       </div>
 

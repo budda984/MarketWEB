@@ -126,31 +126,6 @@ export async function GET(req: Request) {
         // Salvo il prezzo corrente per la valutazione alert
         currentPrices.set(ticker, candlesArr[candlesArr.length - 1].c);
 
-        for (const p of detectHeadAndShoulders(candlesArr)) {
-          if (p.strength < 2) continue;
-          totalHs++;
-          allHs.push({ ticker, pattern: p, market, timestamp: ts, details: hsDetails(p) });
-        }
-        for (const p of detectFlags(candlesArr)) {
-          if (p.strength < 2) continue;
-          totalFlag++;
-          allFlag.push({ ticker, pattern: p, market, timestamp: ts, details: flagDetails(p) });
-        }
-        for (const p of detectWedges(candlesArr)) {
-          if (p.strength < 2) continue;
-          totalWedge++;
-          allWedge.push({ ticker, pattern: p, market, timestamp: ts, details: wedgeDetails(p) });
-        }
-        for (const p of detectCupHandle(candlesArr)) {
-          if (p.strength < 2) continue;
-          totalCup++;
-          allCup.push({ ticker, pattern: p, market, timestamp: ts, details: cupDetails(p) });
-        }
-        for (const p of detectDoubleTopBottom(candlesArr)) {
-          if (p.strength < 2) continue;
-          totalDouble++;
-          allDouble.push({ ticker, pattern: p, market, timestamp: ts, details: doubleDetails(p) });
-        }
       }
 
       marketsCompleted.push(market);
@@ -448,15 +423,6 @@ export async function GET(req: Request) {
           parts.push(formatAlertDigest(triggeredForUser));
         }
         if (hma.length > 0) parts.push(formatSignalsDigest(hma));
-        if (
-          hs.length > 0 ||
-          fl.length > 0 ||
-          we.length > 0 ||
-          cu.length > 0 ||
-          db.length > 0
-        ) {
-          parts.push(formatPatternDigest(hs, fl, we, cu, db));
-        }
 
         return sendTelegramMessage({
           token: s.telegram_bot_token!,
