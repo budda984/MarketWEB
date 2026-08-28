@@ -51,6 +51,8 @@ export default function MoversView({ onOpenTicker }: Props) {
   const [universe, setUniverse] = useState('sp500');
   const [minChange, setMinChange] = useState(1);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [latestQuoteTime, setLatestQuoteTime] = useState<number | null>(null);
+  const [serverTime, setServerTime] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -73,6 +75,8 @@ export default function MoversView({ onOpenTicker }: Props) {
       setLosers(d.losers ?? []);
       setSession(d.session ?? 'regular');
       setStats(d.stats ?? null);
+      setLatestQuoteTime(d.latestQuoteTime ?? null);
+      setServerTime(d.serverTime ?? null);
       setLastUpdate(new Date());
     } catch (e) {
       setErr(String(e));
@@ -84,6 +88,16 @@ export default function MoversView({ onOpenTicker }: Props) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Aggiornamento automatico ogni 2 minuti quando una sessione estesa e'
+  // in corso: in pre-market i prezzi si muovono e un dato fermo e'
+  // fuorviante. A mercato chiuso non serve e si evita di sprecare
+  // chiamate.
+  useEffect(() => {
+    if (session !== 'pre' && session !== 'post') return;
+    const id = setInterval(() => load(), 120_000);
+    return () => clearInterval(id);
+  }, [session, load]);
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
@@ -167,12 +181,12 @@ export default function MoversView({ onOpenTicker }: Props) {
         </div>
       )}
 
-      {session === 'regular' && !loading && !err && (
-        <div className="card p-3 border border-yellow-400/40 text-xs text-yellow-400">
-          Nessuna sessione estesa in corso: la classifica mostra le variazioni
-          della sessione regolare. Il pre-market USA va dalle 10:00 alle 15:30
-          ora italiana, l&apos;after-hours dalle 22:00 alle 2:00.
-        </div>
+      {!loading && !err && (
+        <DataFreshness
+          session={session}
+          latestQuoteTime={latestQuoteTime}
+          serverTime={serverTime}
+        />
       )}
 
       {loading && gainers.length === 0 && losers.length === 0 && (
@@ -280,6 +294,86 @@ function MoverList({
             </button>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Dice a quando risale il dato mostrato. Serve perche' Yahoo mantiene
+ * popolati i campi delle sessioni estese anche quando sono finite: senza
+ * questo riscontro non si distingue il pre-market di oggi da quello di
+ * ieri.
+ */
+function DataFreshness({
+  session,
+  latestQuoteTime,
+  serverTime,
+}: {
+  session: string;
+  latestQuoteTime: number | null;
+  serverTime: number | null;
+}) {
+  if (latestQuoteTime == null) {
+    return (
+      <div className="card p-3 border border-yellow-400/40 text-xs text-yellow-400">
+        Nessun dato di sessione estesa disponibile al momento.
+      </div>
+    );
+  }
+
+  const quoteDate = new Date(latestQuoteTime * 1000);
+  const ageMin =
+    serverTime != null ? Math.round((serverTime - latestQuoteTime) / 60) : null;
+
+  // Il dato e' "di oggi" se cade nella giornata corrente a New York,
+  // che e' il fuso in cui vivono queste sessioni
+  const nyToday = new Date().toLocaleDateString('en-CA', {
+    timeZone: 'America/New_York',
+  });
+  const nyQuoteDay = quoteDate.toLocaleDateString('en-CA', {
+    timeZone: 'America/New_York',
+  });
+  const isToday = nyToday === nyQuoteDay;
+
+  const orario = quoteDate.toLocaleString('it-IT', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  if (session === 'regular') {
+    return (
+      <div className="card p-3 border border-yellow-400/40 text-xs text-yellow-400 space-y-1">
+        <div>
+          Nessuna sessione estesa in corso: la classifica mostra le variazioni
+          della sessione regolare, aggiornate al {orario}.
+        </div>
+        <div className="text-brand-muted">
+          Pre-market USA: 10:00–15:30 ora italiana. After-hours: 22:00–2:00.
+        </div>
+      </div>
+    );
+  }
+
+  if (!isToday) {
+    return (
+      <div className="card p-3 border border-brand-down/40 text-xs text-brand-down">
+        Attenzione: i dati più recenti risalgono al {orario}, non alla
+        giornata odierna. La sessione probabilmente non è ancora iniziata.
+      </div>
+    );
+  }
+
+  return (
+    <div className="card p-2.5 text-xs text-brand-muted flex items-center gap-2 flex-wrap">
+      <span className="text-brand-green font-semibold">Dati di oggi</span>
+      <span>· ultimo scambio {orario}</span>
+      {ageMin != null && ageMin >= 0 && (
+        <span>
+          ({ageMin < 1 ? 'in tempo reale' : `${ageMin} min fa`})
+        </span>
       )}
     </div>
   );

@@ -54,21 +54,36 @@ export async function GET(req: Request) {
     const quotes = await yahooExtendedQuoteMany(tickers, 10);
     const all = Object.values(quotes);
 
-    // Sessione prevalente: se qualche titolo ha dati pre-market siamo in
-    // pre-market, e cosi' via. Serve a etichettare correttamente la vista.
+    // Sessione prevalente. Un singolo titolo con dati residui non basta a
+    // dichiarare aperta una sessione: serve che una quota significativa
+    // dell'universo stia scambiando, altrimenti si etichetta come
+    // pre-market una manciata di scambi isolati.
     const counts = { pre: 0, post: 0, regular: 0, none: 0 };
     for (const q of all) counts[q.session]++;
-    let session: ExtendedQuote['session'] = 'regular';
-    if (counts.pre > 0) session = 'pre';
-    else if (counts.post > 0) session = 'post';
 
-    // Se siamo in sessione estesa considero solo i titoli che hanno
-    // effettivamente scambiato: gli altri riporterebbero la variazione
-    // regolare, falsando la classifica.
-    const relevant =
-      session === 'regular'
-        ? all
-        : all.filter((q) => q.session === session);
+    const MIN_SHARE = 0.05; // almeno il 5% dei titoli
+    const threshold = Math.max(3, Math.floor(all.length * MIN_SHARE));
+
+    let session: ExtendedQuote['session'] = 'regular';
+    if (counts.pre >= threshold) session = 'pre';
+    else if (counts.post >= threshold) session = 'post';
+
+    // Momento del dato piu' recente fra quelli della sessione scelta:
+    // e' l'informazione che dice se stiamo guardando oggi o ieri.
+    const inSessionQuotes =
+      session === 'regular' ? all : all.filter((q) => q.session === session);
+    const latestQuoteTime = inSessionQuotes.reduce<number | null>(
+      (max, q) =>
+        q.quoteTime != null && (max == null || q.quoteTime > max)
+          ? q.quoteTime
+          : max,
+      null
+    );
+
+    // In sessione estesa considero solo i titoli che hanno effettivamente
+    // scambiato: gli altri riporterebbero la variazione regolare,
+    // falsando la classifica.
+    const relevant = inSessionQuotes;
 
     const filtered = relevant.filter(
       (q) => Number.isFinite(q.changePct) && Math.abs(q.changePct) >= minChange
@@ -88,6 +103,11 @@ export async function GET(req: Request) {
       session,
       gainers,
       losers,
+      // Secondi unix del dato piu' recente: la vista lo mostra cosi'
+      // l'utente sa sempre a quando risale quello che sta guardando
+      latestQuoteTime,
+      serverTime: Math.floor(Date.now() / 1000),
+      sessionCounts: counts,
       stats: {
         requested: tickers.length,
         answered: all.length,

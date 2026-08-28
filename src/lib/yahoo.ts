@@ -242,6 +242,10 @@ export type ExtendedQuote = {
   exchangeName?: string;
   /** Momento del dato, secondi unix */
   quoteTime: number | null;
+  /** Eta' del dato in secondi al momento della lettura */
+  ageSec: number | null;
+  /** Momento dell'ultimo scambio nella sessione regolare */
+  regularMarketTime: number | null;
 };
 
 type ChartMetaExtended = {
@@ -300,44 +304,77 @@ export async function yahooExtendedQuote(
     const prevClose = meta.previousClose ?? meta.chartPreviousClose;
     if (regular == null || prevClose == null || prevClose <= 0) return null;
 
-    // Il pre-market si confronta con la chiusura regolare precedente;
-    // l'after-hours con la chiusura di oggi.
-    if (meta.preMarketPrice != null && meta.preMarketPrice > 0) {
-      const base = regular;
+    // SELEZIONE DELLA SESSIONE
+    //
+    // Yahoo lascia preMarketPrice e postMarketPrice popolati anche dopo
+    // che quelle sessioni sono finite: leggerli senza controllare
+    // l'orario significa mostrare i dati del giorno prima.
+    //
+    // Un dato di sessione estesa e' valido solo se e' piu' recente
+    // dell'ultimo scambio regolare. Quando entrambi lo sono (la mattina
+    // presto il post-market di ieri e il pre-market di oggi lo sono),
+    // vince il piu' recente.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const regTime = meta.regularMarketTime ?? 0;
+    const MAX_AGE_SEC = 12 * 3600; // oltre, il dato e' di una sessione chiusa
+
+    const preTime = meta.preMarketTime ?? 0;
+    const postTime = meta.postMarketTime ?? 0;
+
+    const preUsable =
+      meta.preMarketPrice != null &&
+      meta.preMarketPrice > 0 &&
+      preTime > regTime &&
+      nowSec - preTime < MAX_AGE_SEC;
+
+    const postUsable =
+      meta.postMarketPrice != null &&
+      meta.postMarketPrice > 0 &&
+      postTime > regTime &&
+      nowSec - postTime < MAX_AGE_SEC;
+
+    const usePre = preUsable && (!postUsable || preTime >= postTime);
+    const usePost = postUsable && !usePre;
+
+    if (usePre) {
       return {
         ticker,
         session: 'pre',
-        price: meta.preMarketPrice,
-        previousClose: base,
+        price: meta.preMarketPrice!,
+        previousClose: regular,
         changePct:
           meta.preMarketChangePercent != null
             ? meta.preMarketChangePercent
-            : ((meta.preMarketPrice - base) / base) * 100,
+            : ((meta.preMarketPrice! - regular) / regular) * 100,
         extendedVolume: extendedVolume(r, meta.regularMarketTime),
         currency: meta.currency,
         exchangeName: meta.fullExchangeName ?? meta.exchangeName,
-        quoteTime: meta.preMarketTime ?? null,
+        quoteTime: preTime || null,
+        ageSec: preTime ? nowSec - preTime : null,
+        regularMarketTime: meta.regularMarketTime ?? null,
       };
     }
 
-    if (meta.postMarketPrice != null && meta.postMarketPrice > 0) {
+    if (usePost) {
       return {
         ticker,
         session: 'post',
-        price: meta.postMarketPrice,
+        price: meta.postMarketPrice!,
         previousClose: regular,
         changePct:
           meta.postMarketChangePercent != null
             ? meta.postMarketChangePercent
-            : ((meta.postMarketPrice - regular) / regular) * 100,
+            : ((meta.postMarketPrice! - regular) / regular) * 100,
         extendedVolume: extendedVolume(r, meta.regularMarketTime),
         currency: meta.currency,
         exchangeName: meta.fullExchangeName ?? meta.exchangeName,
-        quoteTime: meta.postMarketTime ?? null,
+        quoteTime: postTime || null,
+        ageSec: postTime ? nowSec - postTime : null,
+        regularMarketTime: meta.regularMarketTime ?? null,
       };
     }
 
-    // Nessuna sessione estesa in corso: ritorno il dato regolare
+    // Nessuna sessione estesa valida: ritorno il dato regolare
     return {
       ticker,
       session: 'regular',
@@ -348,6 +385,8 @@ export async function yahooExtendedQuote(
       currency: meta.currency,
       exchangeName: meta.fullExchangeName ?? meta.exchangeName,
       quoteTime: meta.regularMarketTime ?? null,
+      ageSec: regTime ? nowSec - regTime : null,
+      regularMarketTime: meta.regularMarketTime ?? null,
     };
   } catch {
     return null;
