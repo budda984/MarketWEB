@@ -5,6 +5,8 @@
  * Endpoint: https://query1.finance.yahoo.com/v8/finance/chart/{ticker}
  */
 
+import { sessionOfTimestamp } from './market-hours';
+
 export type OHLCV = {
   t: number; // timestamp (unix seconds)
   o: number;
@@ -268,9 +270,12 @@ export async function yahooExtendedQuote(
   ticker: string,
   timeoutMs = 12000
 ): Promise<ExtendedQuote | null> {
+  // range=2d per essere certi di avere sia l'ultima sessione regolare
+  // chiusa sia le barre estese successive. includePrePost=true fa
+  // includere le candele fuori orario.
   const url =
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
-    `?range=1d&interval=5m&includePrePost=true`;
+    `?range=2d&interval=5m&includePrePost=true`;
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -290,7 +295,10 @@ export async function yahooExtendedQuote(
           meta?: ChartMetaExtended;
           timestamp?: number[];
           indicators?: {
-            quote?: Array<{ volume?: (number | null)[] }>;
+            quote?: Array<{
+              close?: (number | null)[];
+              volume?: (number | null)[];
+            }>;
           };
         }>;
       };
@@ -302,79 +310,71 @@ export async function yahooExtendedQuote(
 
     const regular = meta.regularMarketPrice;
     const prevClose = meta.previousClose ?? meta.chartPreviousClose;
-    if (regular == null || prevClose == null || prevClose <= 0) return null;
+    if (regular == null || regular <= 0) return null;
 
-    // SELEZIONE DELLA SESSIONE
-    //
-    // Yahoo lascia preMarketPrice e postMarketPrice popolati anche dopo
-    // che quelle sessioni sono finite: leggerli senza controllare
-    // l'orario significa mostrare i dati del giorno prima.
-    //
-    // Un dato di sessione estesa e' valido solo se e' piu' recente
-    // dell'ultimo scambio regolare. Quando entrambi lo sono (la mattina
-    // presto il post-market di ieri e il pre-market di oggi lo sono),
-    // vince il piu' recente.
     const nowSec = Math.floor(Date.now() / 1000);
     const regTime = meta.regularMarketTime ?? 0;
-    const MAX_AGE_SEC = 12 * 3600; // oltre, il dato e' di una sessione chiusa
 
-    const preTime = meta.preMarketTime ?? 0;
-    const postTime = meta.postMarketTime ?? 0;
+    // LA SESSIONE ESTESA SI RICAVA DALLE CANDELE.
+    //
+    // Il blocco meta di /v8/finance/chart/ non espone preMarketPrice:
+    // quei campi appartengono agli endpoint quote, che dai datacenter
+    // rispondono 403. Con includePrePost=true, pero', le barre fuori
+    // orario sono presenti nell'array timestamp: l'ultima chiusura
+    // valida successiva all'ultimo scambio regolare E' il prezzo della
+    // sessione estesa.
+    const ts = r?.timestamp ?? [];
+    const closes = r?.indicators?.quote?.[0]?.close ?? [];
+    const vols = r?.indicators?.quote?.[0]?.volume ?? [];
 
-    const preUsable =
-      meta.preMarketPrice != null &&
-      meta.preMarketPrice > 0 &&
-      preTime > regTime &&
-      nowSec - preTime < MAX_AGE_SEC;
+    let extPrice: number | null = null;
+    let extTime: number | null = null;
+    let extVol = 0;
+    let extVolSeen = false;
 
-    const postUsable =
-      meta.postMarketPrice != null &&
-      meta.postMarketPrice > 0 &&
-      postTime > regTime &&
-      nowSec - postTime < MAX_AGE_SEC;
-
-    const usePre = preUsable && (!postUsable || preTime >= postTime);
-    const usePost = postUsable && !usePre;
-
-    if (usePre) {
-      return {
-        ticker,
-        session: 'pre',
-        price: meta.preMarketPrice!,
-        previousClose: regular,
-        changePct:
-          meta.preMarketChangePercent != null
-            ? meta.preMarketChangePercent
-            : ((meta.preMarketPrice! - regular) / regular) * 100,
-        extendedVolume: extendedVolume(r, meta.regularMarketTime),
-        currency: meta.currency,
-        exchangeName: meta.fullExchangeName ?? meta.exchangeName,
-        quoteTime: preTime || null,
-        ageSec: preTime ? nowSec - preTime : null,
-        regularMarketTime: meta.regularMarketTime ?? null,
-      };
+    for (let i = ts.length - 1; i >= 0; i--) {
+      const t = ts[i];
+      if (t == null || t <= regTime) break; // arrivati alla sessione regolare
+      const c = closes[i];
+      const v = vols[i];
+      if (v != null && v > 0) {
+        extVol += v;
+        extVolSeen = true;
+      }
+      // La prima chiusura valida partendo dal fondo e' il prezzo corrente
+      if (extPrice == null && c != null && Number.isFinite(c) && c > 0) {
+        extPrice = c;
+        extTime = t;
+      }
     }
 
-    if (usePost) {
-      return {
-        ticker,
-        session: 'post',
-        price: meta.postMarketPrice!,
-        previousClose: regular,
-        changePct:
-          meta.postMarketChangePercent != null
-            ? meta.postMarketChangePercent
-            : ((meta.postMarketPrice! - regular) / regular) * 100,
-        extendedVolume: extendedVolume(r, meta.regularMarketTime),
-        currency: meta.currency,
-        exchangeName: meta.fullExchangeName ?? meta.exchangeName,
-        quoteTime: postTime || null,
-        ageSec: postTime ? nowSec - postTime : null,
-        regularMarketTime: meta.regularMarketTime ?? null,
-      };
+    const MAX_AGE_SEC = 12 * 3600;
+    const extUsable =
+      extPrice != null &&
+      extTime != null &&
+      nowSec - extTime < MAX_AGE_SEC;
+
+    if (extUsable) {
+      const kind = sessionOfTimestamp(extTime!);
+      if (kind === 'pre' || kind === 'post') {
+        return {
+          ticker,
+          session: kind,
+          price: extPrice!,
+          previousClose: regular,
+          changePct: ((extPrice! - regular) / regular) * 100,
+          extendedVolume: extVolSeen ? extVol : null,
+          currency: meta.currency,
+          exchangeName: meta.fullExchangeName ?? meta.exchangeName,
+          quoteTime: extTime,
+          ageSec: nowSec - extTime!,
+          regularMarketTime: meta.regularMarketTime ?? null,
+        };
+      }
     }
 
-    // Nessuna sessione estesa valida: ritorno il dato regolare
+    // Nessuna barra estesa utilizzabile: dato della sessione regolare
+    if (prevClose == null || prevClose <= 0) return null;
     return {
       ticker,
       session: 'regular',
@@ -393,32 +393,6 @@ export async function yahooExtendedQuote(
   } finally {
     clearTimeout(timer);
   }
-}
-
-/** Somma il volume delle candele successive alla chiusura regolare. */
-function extendedVolume(
-  r: {
-    timestamp?: number[];
-    indicators?: { quote?: Array<{ volume?: (number | null)[] }> };
-  },
-  regularMarketTime?: number
-): number | null {
-  const ts = r.timestamp;
-  const vols = r.indicators?.quote?.[0]?.volume;
-  if (!ts || !vols || ts.length !== vols.length) return null;
-
-  let total = 0;
-  let seen = false;
-  for (let i = 0; i < ts.length; i++) {
-    const v = vols[i];
-    if (v == null) continue;
-    // Se conosco l'orario di chiusura regolare conto solo il dopo,
-    // altrimenti sommo tutto quello disponibile.
-    if (regularMarketTime != null && ts[i] <= regularMarketTime) continue;
-    total += v;
-    seen = true;
-  }
-  return seen ? total : null;
 }
 
 /** Versione parallela con concorrenza limitata. */

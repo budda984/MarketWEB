@@ -26,6 +26,70 @@ export async function GET(req: Request) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const url = new URL(req.url);
+
+  // Diagnostica: /api/movers?debug=AAPL restituisce la risposta grezza di
+  // Yahoo per un solo titolo. Serve a verificare quali campi arrivano
+  // davvero, senza dover indovinare.
+  const debugTicker = url.searchParams.get('debug');
+  if (debugTicker) {
+    const t = debugTicker.toUpperCase();
+    const res = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(t)}` +
+        '?range=2d&interval=5m&includePrePost=true',
+      {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Accept: 'application/json',
+        },
+        cache: 'no-store',
+      }
+    );
+    const status = res.status;
+    const body = await res.text();
+    if (!res.ok) {
+      return NextResponse.json({ debug: t, status, bodyStart: body.slice(0, 300) });
+    }
+    const j = JSON.parse(body);
+    const r0 = j?.chart?.result?.[0];
+    const meta = r0?.meta ?? {};
+    const ts: number[] = r0?.timestamp ?? [];
+    const closes = r0?.indicators?.quote?.[0]?.close ?? [];
+    const regTime = meta.regularMarketTime ?? 0;
+
+    const afterRegular = ts
+      .map((tt: number, i: number) => ({ t: tt, c: closes[i] }))
+      .filter((x: { t: number }) => x.t > regTime)
+      .slice(-8)
+      .map((x: { t: number; c: number | null }) => ({
+        etTime: new Date(x.t * 1000).toLocaleString('en-US', {
+          timeZone: 'America/New_York',
+        }),
+        close: x.c,
+      }));
+
+    return NextResponse.json({
+      debug: t,
+      status,
+      metaKeys: Object.keys(meta),
+      hasPreMarketPrice: 'preMarketPrice' in meta,
+      regularMarketPrice: meta.regularMarketPrice,
+      previousClose: meta.previousClose,
+      regularMarketTimeET: regTime
+        ? new Date(regTime * 1000).toLocaleString('en-US', {
+            timeZone: 'America/New_York',
+          })
+        : null,
+      currentTradingPeriod: meta.currentTradingPeriod ?? null,
+      totalCandles: ts.length,
+      candlesAfterRegularClose: afterRegular.length,
+      lastExtendedCandles: afterRegular,
+      serverNowET: new Date().toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+      }),
+    });
+  }
+
   const universeParam = url.searchParams.get('universe') ?? 'sp500';
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 20), 50);
   const minChange = Number(url.searchParams.get('minChange') ?? 1);

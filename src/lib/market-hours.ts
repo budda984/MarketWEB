@@ -106,3 +106,29 @@ export function sessionLabel(s: MarketSession): string {
     closed: 'Mercato chiuso',
   }[s];
 }
+
+/** Minuti dalla mezzanotte di New York per un istante dato. */
+export function etMinutesOfDay(d: Date): number {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = Object.fromEntries(
+    fmt.formatToParts(d).map((p) => [p.type, p.value])
+  );
+  return (Number(parts.hour) % 24) * 60 + Number(parts.minute);
+}
+
+/**
+ * A quale sessione appartiene un istante, in base all'ora di New York.
+ * Usata per classificare le candele delle sessioni estese.
+ */
+export function sessionOfTimestamp(tsSeconds: number): MarketSession {
+  const mins = etMinutesOfDay(new Date(tsSeconds * 1000));
+  if (mins >= 4 * 60 && mins < 9 * 60 + 30) return 'pre';
+  if (mins >= 9 * 60 + 30 && mins < 16 * 60) return 'regular';
+  if (mins >= 16 * 60 && mins < 20 * 60) return 'post';
+  return 'closed';
+}
