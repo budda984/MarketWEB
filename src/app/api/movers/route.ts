@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { yahooExtendedQuoteMany, type ExtendedQuote } from '@/lib/yahoo';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
+import { getMarketSession } from '@/lib/market-hours';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,24 +55,33 @@ export async function GET(req: Request) {
     const quotes = await yahooExtendedQuoteMany(tickers, 10);
     const all = Object.values(quotes);
 
-    // Sessione prevalente. Un singolo titolo con dati residui non basta a
-    // dichiarare aperta una sessione: serve che una quota significativa
-    // dell'universo stia scambiando, altrimenti si etichetta come
-    // pre-market una manciata di scambi isolati.
+    // LA SESSIONE SI DEDUCE DALL'OROLOGIO, NON DAI DATI.
+    //
+    // Contare quanti titoli hanno gia' scambiato per decidere se il
+    // pre-market e' aperto porta a dichiararlo chiuso proprio nei primi
+    // minuti, quando hanno scambiato in pochi: e' cosi' che la vista
+    // finiva per mostrare la chiusura del giorno prima.
+    const marketInfo = getMarketSession();
     const counts = { pre: 0, post: 0, regular: 0, none: 0 };
     for (const q of all) counts[q.session]++;
 
-    const MIN_SHARE = 0.05; // almeno il 5% dei titoli
-    const threshold = Math.max(3, Math.floor(all.length * MIN_SHARE));
+    // In sessione estesa mostro i titoli che hanno effettivamente
+    // scambiato in quella sessione. Gli altri riportano la variazione
+    // regolare e falserebbero la classifica.
+    let session: ExtendedQuote['session'];
+    let inSessionQuotes: ExtendedQuote[];
 
-    let session: ExtendedQuote['session'] = 'regular';
-    if (counts.pre >= threshold) session = 'pre';
-    else if (counts.post >= threshold) session = 'post';
+    if (marketInfo.session === 'pre') {
+      session = 'pre';
+      inSessionQuotes = all.filter((q) => q.session === 'pre');
+    } else if (marketInfo.session === 'post') {
+      session = 'post';
+      inSessionQuotes = all.filter((q) => q.session === 'post');
+    } else {
+      session = 'regular';
+      inSessionQuotes = all;
+    }
 
-    // Momento del dato piu' recente fra quelli della sessione scelta:
-    // e' l'informazione che dice se stiamo guardando oggi o ieri.
-    const inSessionQuotes =
-      session === 'regular' ? all : all.filter((q) => q.session === session);
     const latestQuoteTime = inSessionQuotes.reduce<number | null>(
       (max, q) =>
         q.quoteTime != null && (max == null || q.quoteTime > max)
@@ -108,6 +118,7 @@ export async function GET(req: Request) {
       latestQuoteTime,
       serverTime: Math.floor(Date.now() / 1000),
       sessionCounts: counts,
+      marketInfo,
       stats: {
         requested: tickers.length,
         answered: all.length,
