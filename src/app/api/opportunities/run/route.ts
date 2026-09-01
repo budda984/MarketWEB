@@ -155,8 +155,12 @@ export async function POST(req: Request) {
     }
 
     // --- Salvataggio ---------------------------------------------------
+    // L'esito va verificato: senza questo controllo una scrittura fallita
+    // restituirebbe comunque "N candidati trovati" e la lista resterebbe
+    // vuota senza spiegazione.
+    let saved = 0;
     if (found.length > 0) {
-      await admin.from('opportunities').upsert(
+      const { error: saveErr } = await admin.from('opportunities').upsert(
         found.map((o) => ({
           run_date: runDate,
           ticker: o.ticker,
@@ -181,6 +185,26 @@ export async function POST(req: Request) {
         })),
         { onConflict: 'run_date,ticker', ignoreDuplicates: false }
       );
+
+      if (saveErr) {
+        const missing = /schema cache|does not exist/i.test(saveErr.message);
+        return NextResponse.json(
+          {
+            error: missing
+              ? "Trovati candidati ma la tabella 'opportunities' non esiste: esegui la migration 009_opportunities.sql nell'SQL Editor di Supabase, poi rilancia."
+              : `Salvataggio fallito: ${saveErr.message}`,
+            stats: {
+              universeSize: universe.length,
+              processedUpTo: Math.min(i, universe.length),
+              evaluated,
+              matches: found.length,
+              saved: 0,
+            },
+          },
+          { status: 500 }
+        );
+      }
+      saved = found.length;
     }
 
     const done = i >= universe.length;
@@ -195,6 +219,7 @@ export async function POST(req: Request) {
         processedUpTo: Math.min(i, universe.length),
         evaluated,
         matches: found.length,
+        saved,
         elapsedMs: Date.now() - t0,
       },
     });

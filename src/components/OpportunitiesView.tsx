@@ -102,14 +102,16 @@ export default function OpportunitiesView({ onOpenTicker }: Props) {
           break;
         }
         const s = d.stats;
-        total += s.matches;
+        // Conta le righe effettivamente salvate: "trovati" senza
+        // "salvati" e' la situazione in cui la lista resta vuota
+        total += s.saved ?? s.matches;
         setProgress(
-          `${s.processedUpTo}/${s.universeSize} titoli · ${total} candidati`
+          `${s.processedUpTo}/${s.universeSize} titoli · ${total} salvati`
         );
         if (d.done || d.nextOffset == null) break;
         offset = d.nextOffset;
       }
-      setProgress(`Completato · ${total} candidati`);
+      setProgress(`Completato · ${total} candidati salvati`);
       await load();
     } catch (e) {
       setErr(String(e));

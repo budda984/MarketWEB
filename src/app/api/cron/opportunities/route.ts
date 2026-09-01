@@ -131,8 +131,9 @@ export async function GET(req: Request) {
 
     found.sort((a, b) => b.totalScore - a.totalScore);
 
+    let saveError: string | null = null;
     if (found.length > 0) {
-      await admin.from('opportunities').upsert(
+      const { error: saveErr } = await admin.from('opportunities').upsert(
         found.map((o) => ({
           run_date: runDate,
           ticker: o.ticker,
@@ -156,6 +157,14 @@ export async function GET(req: Request) {
           reasons: o.reasons,
         })),
         { onConflict: 'run_date,ticker', ignoreDuplicates: false }
+      );
+      if (saveErr) saveError = saveErr.message;
+    }
+
+    if (saveError) {
+      return NextResponse.json(
+        { error: `Salvataggio fallito: ${saveError}`, matches: found.length },
+        { status: 500 }
       );
     }
 

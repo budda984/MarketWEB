@@ -16,14 +16,20 @@ export async function GET(req: Request) {
   const minScore = Number(url.searchParams.get('minScore') ?? 0);
   let date = url.searchParams.get('date');
 
-  // Senza data esplicita uso l'ultima esecuzione disponibile
+  // Senza data esplicita uso l'ultima esecuzione disponibile.
+  // L'errore va controllato: se la tabella non esiste, ignorarlo
+  // produrrebbe una lista vuota indistinguibile da "nessun risultato".
   if (!date) {
-    const { data: last } = await supabase
+    const { data: last, error: lastErr } = await supabase
       .from('opportunities')
       .select('run_date')
       .order('run_date', { ascending: false })
       .limit(1)
       .maybeSingle();
+
+    if (lastErr) {
+      return NextResponse.json({ error: describeDbError(lastErr.message) }, { status: 500 });
+    }
     date = last?.run_date ?? null;
   }
 
@@ -55,4 +61,12 @@ export async function GET(req: Request) {
     runDate: date,
     availableDates,
   });
+}
+
+/** Trasforma gli errori Postgres in messaggi che dicono cosa fare. */
+function describeDbError(msg: string): string {
+  if (/schema cache|does not exist|relation .* does not exist/i.test(msg)) {
+    return "La tabella 'opportunities' non esiste ancora. Esegui la migration 009_opportunities.sql nell'SQL Editor di Supabase, poi rilancia la scansione.";
+  }
+  return `Errore database: ${msg}`;
 }
