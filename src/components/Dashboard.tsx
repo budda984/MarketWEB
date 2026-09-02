@@ -20,7 +20,6 @@ import {
   CalendarClock,
   MessagesSquare,
   Crosshair,
-  FlaskConical,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
@@ -38,7 +37,6 @@ import MoversView from './MoversView';
 import WeeklyTrendView from './WeeklyTrendView';
 import SocialView from './SocialView';
 import OpportunitiesView from './OpportunitiesView';
-import CandleBacktestView from './CandleBacktestView';
 
 type View =
   | 'chart'
@@ -52,8 +50,7 @@ type View =
   | 'movers'
   | 'weekly'
   | 'social'
-  | 'radar'
-  | 'candletest';
+  | 'radar';
 
 type Props = {
   userEmail: string;
@@ -270,12 +267,6 @@ export default function Dashboard({
             label="Backtest"
           />
           <NavButton
-            active={view === 'candletest'}
-            onClick={() => setView('candletest')}
-            icon={<FlaskConical className="w-4 h-4" />}
-            label="Verifica pattern"
-          />
-          <NavButton
             active={view === 'settings'}
             onClick={() => setView('settings')}
             icon={<Settings className="w-4 h-4" />}
@@ -460,12 +451,6 @@ export default function Dashboard({
                   Indici
                 </span>
               )}
-              {view === 'candletest' && (
-                <span className="font-semibold flex items-center gap-1.5">
-                  <FlaskConical className="w-4 h-4 flex-shrink-0" />
-                  Verifica pattern
-                </span>
-              )}
               {view === 'settings' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <Settings className="w-4 h-4 flex-shrink-0" />
@@ -522,7 +507,6 @@ export default function Dashboard({
           {view === 'social' && <SocialView onOpenTicker={onOpenTicker} />}
           {view === 'movers' && <MoversView onOpenTicker={onOpenTicker} />}
           {view === 'indices' && <IndicesView onOpenTicker={onOpenTicker} />}
-          {view === 'candletest' && <CandleBacktestView />}
           {view === 'settings' && <SettingsView />}
         </div>
       </main>
