@@ -77,6 +77,9 @@ export default function WeeklyBacktestView() {
   async function run() {
     setRunning(true);
     setErr(null);
+    // Riscontro immediato: se questa scritta non compare, il click non e'
+    // arrivato al pulsante ed e' un problema diverso dal backtest
+    setProgress('Avvio…');
     setSummary(null);
     setSamples([]);
 
@@ -136,12 +139,27 @@ export default function WeeklyBacktestView() {
   }
 
   return (
-    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 overflow-x-hidden">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 w-full max-w-full">
       <div className="card p-3 sm:p-4 space-y-3">
         <div className="flex items-center gap-2 min-w-0">
           <History className="w-5 h-5 text-brand-green flex-shrink-0" />
           <span className="font-semibold truncate">Backtest HMA50</span>
+          {running && (
+            <Loader2 className="w-4 h-4 animate-spin text-brand-green flex-shrink-0 ml-auto" />
+          )}
         </div>
+
+        {(progress || err) && (
+          <div
+            className={`rounded p-2 text-xs break-words ${
+              err
+                ? 'bg-brand-down/15 text-brand-down'
+                : 'bg-brand-green/15 text-brand-green'
+            }`}
+          >
+            {err ?? progress}
+          </div>
+        )}
         {/* Scelte rapide */}
         <div className="flex flex-wrap gap-1.5">
           {PRESETS.map((p) => (
@@ -254,7 +272,7 @@ export default function WeeklyBacktestView() {
         <button
           onClick={run}
           disabled={running || selectedMarkets.length === 0}
-          className="btn-primary text-xs w-full disabled:opacity-50"
+          className="btn-primary w-full py-2.5 text-sm disabled:opacity-50"
         >
           {running ? (
             <span className="flex items-center justify-center gap-1.5">
@@ -267,8 +285,7 @@ export default function WeeklyBacktestView() {
           )}
         </button>
 
-        {progress && <div className="text-xs text-brand-green">{progress}</div>}
-        {err && <div className="text-xs text-brand-down">{err}</div>}
+
       </div>
 
       {summary && (
