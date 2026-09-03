@@ -108,30 +108,12 @@ export default function WeeklyBacktestView() {
   }
 
   return (
-    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 overflow-x-hidden">
       <div className="card p-3 sm:p-4 space-y-3">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2">
-            <History className="w-5 h-5 text-brand-green" />
-            <span className="font-semibold">Backtest HMA50 settimanale</span>
-          </div>
-          <button
-            onClick={run}
-            disabled={running || selectedMarkets.length === 0}
-            className="btn-primary text-xs disabled:opacity-50"
-          >
-            {running ? (
-              <span className="flex items-center gap-1.5">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> In corso…
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5">
-                <Play className="w-3.5 h-3.5" /> Esegui backtest
-              </span>
-            )}
-          </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <History className="w-5 h-5 text-brand-green flex-shrink-0" />
+          <span className="font-semibold truncate">Backtest HMA50</span>
         </div>
-
         <div>
           <div className="text-xs text-brand-muted font-semibold uppercase tracking-wide mb-1.5">
             Mercati ({totalTickers} ticker)
@@ -153,24 +135,24 @@ export default function WeeklyBacktestView() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          <label className="flex items-center gap-1.5 text-xs">
-            <span className="text-brand-muted">Storico:</span>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="text-xs space-y-1 min-w-0">
+            <span className="text-brand-muted block">Storico</span>
             <select
               value={period}
               onChange={(e) => setPeriod(e.target.value as '5y' | 'max')}
-              className="input text-xs py-1"
+              className="input text-xs py-1 w-full"
             >
               <option value="5y">5 anni</option>
-              <option value="max">Tutto il disponibile</option>
+              <option value="max">Massimo</option>
             </select>
           </label>
-          <label className="flex items-center gap-1.5 text-xs">
-            <span className="text-brand-muted">Periodo HMA:</span>
+          <label className="text-xs space-y-1 min-w-0">
+            <span className="text-brand-muted block">Periodo HMA</span>
             <select
               value={hmaPeriod}
               onChange={(e) => setHmaPeriod(Number(e.target.value))}
-              className="input text-xs py-1"
+              className="input text-xs py-1 w-full"
             >
               <option value={30}>30</option>
               <option value={40}>40</option>
@@ -179,6 +161,34 @@ export default function WeeklyBacktestView() {
             </select>
           </label>
         </div>
+
+        <div className="text-xs text-brand-muted">
+          {selectedMarkets.length === 0 ? (
+            <span className="text-yellow-400">
+              Seleziona almeno un mercato per avviare.
+            </span>
+          ) : (
+            <>
+              Selezionati: <strong>{selectedMarkets.join(', ')}</strong>
+            </>
+          )}
+        </div>
+
+        <button
+          onClick={run}
+          disabled={running || selectedMarkets.length === 0}
+          className="btn-primary text-xs w-full disabled:opacity-50"
+        >
+          {running ? (
+            <span className="flex items-center justify-center gap-1.5">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> In corso…
+            </span>
+          ) : (
+            <span className="flex items-center justify-center gap-1.5">
+              <Play className="w-3.5 h-3.5" /> Esegui backtest
+            </span>
+          )}
+        </button>
 
         {progress && <div className="text-xs text-brand-green">{progress}</div>}
         {err && <div className="text-xs text-brand-down">{err}</div>}
