@@ -307,9 +307,14 @@ export default function AutoRulesPanel({ onOpenTicker }: Props) {
       )}
 
       {rules.map((rule) => {
-        const rHits = (hitsByRule.get(rule.id) ?? []).sort(
-          (a, b) => a.pct_above_low - b.pct_above_low
-        );
+        // Dal piu' recente al piu' vecchio: il valore di questi avvisi sta
+        // nella tempestivita', quindi i nuovi vanno in cima. A parita' di
+        // momento vince chi e' piu' vicino al minimo.
+        const rHits = [...(hitsByRule.get(rule.id) ?? [])].sort((a, b) => {
+          const byDate = b.triggered_at.localeCompare(a.triggered_at);
+          if (byDate !== 0) return byDate;
+          return a.pct_above_low - b.pct_above_low;
+        });
         return (
           <div key={rule.id} className="card overflow-hidden">
             <div className="px-3 sm:px-4 py-2.5 bg-brand-panel/40 border-b border-brand-border flex items-center gap-2 flex-wrap">
@@ -370,8 +375,19 @@ export default function AutoRulesPanel({ onOpenTicker }: Props) {
                         )}
                       </div>
                     </div>
-                    <div className="text-xs text-brand-muted flex-shrink-0">
-                      {new Date(h.triggered_at).toLocaleDateString('it-IT')}
+                    <div className="text-xs text-brand-muted flex-shrink-0 text-right">
+                      <div>
+                        {new Date(h.triggered_at).toLocaleDateString('it-IT', {
+                          day: '2-digit',
+                          month: '2-digit',
+                        })}
+                      </div>
+                      <div className="text-brand-muted/70">
+                        {new Date(h.triggered_at).toLocaleTimeString('it-IT', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </div>
                     </div>
                     <ExternalLink className="w-3.5 h-3.5 text-brand-muted flex-shrink-0" />
                   </button>
