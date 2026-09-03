@@ -20,6 +20,7 @@ import {
   CalendarClock,
   MessagesSquare,
   Crosshair,
+  History,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
@@ -35,6 +36,7 @@ import ScreenerView from './ScreenerView';
 import InsiderView from './InsiderView';
 import MoversView from './MoversView';
 import WeeklyTrendView from './WeeklyTrendView';
+import WeeklyBacktestView from './WeeklyBacktestView';
 import SocialView from './SocialView';
 import OpportunitiesView from './OpportunitiesView';
 
@@ -50,7 +52,8 @@ type View =
   | 'movers'
   | 'weekly'
   | 'social'
-  | 'radar';
+  | 'radar'
+  | 'weeklytest';
 
 type Props = {
   userEmail: string;
@@ -261,6 +264,12 @@ export default function Dashboard({
             label="Indici"
           />
           <NavButton
+            active={view === 'weeklytest'}
+            onClick={() => setView('weeklytest')}
+            icon={<History className="w-4 h-4" />}
+            label="Backtest HMA"
+          />
+          <NavButton
             active={view === 'backtest'}
             onClick={() => setView('backtest')}
             icon={<Zap className="w-4 h-4" />}
@@ -397,7 +406,14 @@ export default function Dashboard({
                   )}
                 </span>
               )}
-              {view === 'backtest' && (
+              {view === 'weeklytest' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <History className="w-4 h-4 flex-shrink-0" />
+                  Backtest HMA
+                </span>
+              )}
+              {view === 'weeklytest' && <WeeklyBacktestView />}
+          {view === 'backtest' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <Zap className="w-4 h-4 flex-shrink-0" />
                   Backtest
