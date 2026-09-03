@@ -1,7 +1,16 @@
 'use client';
 
 import { useState } from 'react';
-import { History, Loader2, Play, Info, AlertTriangle } from 'lucide-react';
+import {
+  History,
+  Loader2,
+  Play,
+  Info,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Check,
+} from 'lucide-react';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
 import {
   emptyAccumulator,
@@ -28,6 +37,7 @@ export default function WeeklyBacktestView() {
   ]);
   const [period, setPeriod] = useState<'5y' | 'max'>('5y');
   const [hmaPeriod, setHmaPeriod] = useState(50);
+  const [marketsOpen, setMarketsOpen] = useState(false);
 
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -39,6 +49,24 @@ export default function WeeklyBacktestView() {
     (s, m) => s + ((MARKETS[m] as readonly string[])?.length ?? 0),
     0
   );
+
+  // Gruppi predefiniti: selezionare a mano fra 24 mercati su telefono e'
+  // scomodo, e nella pratica le combinazioni utili sono poche.
+  const PRESETS: Array<{ label: string; markets: MarketKey[] }> = [
+    { label: 'USA', markets: ['S&P 500', 'NASDAQ'] as MarketKey[] },
+    {
+      label: 'Europa',
+      markets: [
+        'Italia', 'Francia', 'Germania', 'Olanda', 'UK', 'Spagna', 'Svizzera',
+      ] as MarketKey[],
+    },
+    { label: 'Italia', markets: ['Italia'] as MarketKey[] },
+    { label: 'Crypto', markets: ['Crypto'] as MarketKey[] },
+  ];
+
+  function applyPreset(markets: MarketKey[]) {
+    setSelectedMarkets(markets.filter((m) => m in MARKETS));
+  }
 
   function toggleMarket(m: MarketKey) {
     setSelectedMarkets((prev) =>
@@ -114,25 +142,74 @@ export default function WeeklyBacktestView() {
           <History className="w-5 h-5 text-brand-green flex-shrink-0" />
           <span className="font-semibold truncate">Backtest HMA50</span>
         </div>
+        {/* Scelte rapide */}
+        <div className="flex flex-wrap gap-1.5">
+          {PRESETS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => applyPreset(p.markets)}
+              className="px-3 py-1.5 rounded text-xs font-medium bg-brand-panel/60 text-brand-text hover:bg-brand-card transition"
+            >
+              {p.label}
+            </button>
+          ))}
+          <button
+            onClick={() => setSelectedMarkets([])}
+            className="px-3 py-1.5 rounded text-xs font-medium bg-brand-panel/40 text-brand-muted hover:bg-brand-card transition"
+          >
+            Azzera
+          </button>
+        </div>
+
+        {/* Elenco completo, richiudibile: occupa spazio solo se serve */}
         <div>
-          <div className="text-xs text-brand-muted font-semibold uppercase tracking-wide mb-1.5">
-            Mercati ({totalTickers} ticker)
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {(Object.keys(MARKETS) as MarketKey[]).map((m) => (
-              <button
-                key={m}
-                onClick={() => toggleMarket(m)}
-                className={`px-2 py-1 rounded text-xs font-medium transition ${
-                  selectedMarkets.includes(m)
-                    ? 'bg-brand-green text-black'
-                    : 'bg-brand-panel/40 text-brand-muted hover:bg-brand-card'
-                }`}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
+          <button
+            onClick={() => setMarketsOpen(!marketsOpen)}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded bg-brand-panel/40 text-xs"
+          >
+            <span className="text-brand-muted">
+              {selectedMarkets.length === 0
+                ? 'Nessun mercato selezionato'
+                : `${selectedMarkets.length} mercati · ${totalTickers} ticker`}
+            </span>
+            {marketsOpen ? (
+              <ChevronUp className="w-4 h-4 text-brand-muted flex-shrink-0" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-brand-muted flex-shrink-0" />
+            )}
+          </button>
+
+          {marketsOpen && (
+            <div className="mt-1 max-h-56 overflow-y-auto rounded border border-brand-border divide-y divide-brand-border">
+              {(Object.keys(MARKETS) as MarketKey[]).map((m) => {
+                const active = selectedMarkets.includes(m);
+                const n = (MARKETS[m] as readonly string[]).length;
+                return (
+                  <button
+                    key={m}
+                    onClick={() => toggleMarket(m)}
+                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition ${
+                      active ? 'bg-brand-green/15' : 'hover:bg-brand-card/40'
+                    }`}
+                  >
+                    <span
+                      className={`w-4 h-4 rounded flex-shrink-0 border flex items-center justify-center ${
+                        active
+                          ? 'bg-brand-green border-brand-green'
+                          : 'border-brand-border'
+                      }`}
+                    >
+                      {active && <Check className="w-3 h-3 text-black" />}
+                    </span>
+                    <span className="flex-1 min-w-0 text-sm truncate">{m}</span>
+                    <span className="text-xs text-brand-muted flex-shrink-0">
+                      {n}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-2">
@@ -352,20 +429,20 @@ export default function WeeklyBacktestView() {
               <AlertTriangle className="w-3.5 h-3.5" /> Prima di trarre
               conclusioni
             </div>
-            <p className="text-xs text-brand-muted">
+            <p className="text-xs text-brand-muted break-words">
               <strong>Il periodo testato è stato prevalentemente
               rialzista.</strong> Una regola che segue il trend al rialzo
               parte avvantaggiata in questo contesto: il risultato dice poco
               su come si comporterebbe in un mercato laterale o in discesa
               prolungata.
             </p>
-            <p className="text-xs text-brand-muted">
+            <p className="text-xs text-brand-muted break-words">
               <strong>Bias di sopravvivenza:</strong> l&apos;universo sono i
               titoli che oggi fanno parte degli indici. Le aziende uscite o
               fallite non ci sono, e su quelle la regola avrebbe subito le
               perdite peggiori.
             </p>
-            <p className="text-xs text-brand-muted">
+            <p className="text-xs text-brand-muted break-words">
               Non sono inclusi commissioni, spread né tasse. L&apos;ingresso
               è calcolato sulla chiusura della settimana del segnale: nella
               realtà entreresti il lunedì a un prezzo diverso.
