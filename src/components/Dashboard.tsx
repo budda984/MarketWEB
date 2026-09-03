@@ -338,7 +338,12 @@ export default function Dashboard({
 
       {/* FOOTER fisso */}
       <div className="p-3 border-t border-brand-border flex-shrink-0">
-        <div className="text-xs text-brand-muted truncate mb-2">{userEmail}</div>
+        <div className="text-xs text-brand-muted truncate">{userEmail}</div>
+        {/* Identificativo della build: permette di capire a colpo
+            d'occhio se il browser sta servendo una versione vecchia */}
+        <div className="text-[10px] text-brand-muted/60 mb-2 font-mono">
+          build {process.env.NEXT_PUBLIC_BUILD_SHA}
+        </div>
         <button onClick={signOut} className="btn-ghost w-full justify-center">
           <LogOut className="w-4 h-4" /> Esci
         </button>
@@ -412,8 +417,7 @@ export default function Dashboard({
                   Backtest HMA
                 </span>
               )}
-              {view === 'weeklytest' && <WeeklyBacktestView />}
-          {view === 'backtest' && (
+              {view === 'backtest' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <Zap className="w-4 h-4 flex-shrink-0" />
                   Backtest
@@ -515,6 +519,7 @@ export default function Dashboard({
           {view === 'backtest' && (
             <BacktestView initialMarkets={selectedMarkets} />
           )}
+          {view === 'weeklytest' && <WeeklyBacktestView />}
           {view === 'alerts' && <AlertsView onOpenTicker={onOpenTicker} />}
           {view === 'screener' && <ScreenerView onOpenTicker={onOpenTicker} />}
           {view === 'insider' && <InsiderView onOpenTicker={onOpenTicker} />}
