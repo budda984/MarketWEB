@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   History,
   Loader2,
@@ -38,6 +38,7 @@ export default function WeeklyBacktestView() {
   const [period, setPeriod] = useState<'5y' | 'max'>('5y');
   const [hmaPeriod, setHmaPeriod] = useState(50);
   const [marketsOpen, setMarketsOpen] = useState(false);
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -131,6 +132,12 @@ export default function WeeklyBacktestView() {
           .slice(0, 20)
       );
       setProgress(`Completato · ${acc.closedTrades} operazioni chiuse`);
+      // I risultati compaiono sotto i controlli: senza questo bisognerebbe
+      // cercarli scorrendo
+      setTimeout(
+        () => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+        150
+      );
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -285,8 +292,27 @@ export default function WeeklyBacktestView() {
           )}
         </button>
 
-
+        {/* Riscontro immediato: deve stare SOTTO il pulsante, altrimenti
+            premendolo non si vede nulla accadere. */}
+        {running && (
+          <div className="text-xs text-brand-green flex items-center gap-1.5">
+            <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+            <span className="break-words">
+              {progress ?? 'Avvio della scansione…'}
+            </span>
+          </div>
+        )}
+        {!running && progress && !err && (
+          <div className="text-xs text-brand-green break-words">{progress}</div>
+        )}
+        {err && (
+          <div className="text-xs text-brand-down break-words border border-brand-down/40 rounded p-2">
+            {err}
+          </div>
+        )}
       </div>
+
+      <div ref={resultsRef} />
 
       {summary && (
         <>
