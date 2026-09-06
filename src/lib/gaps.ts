@@ -46,6 +46,12 @@ export type Gap = {
   daysToFill: number | null;
   /** Sedute trascorse dall'apertura, se ancora aperto */
   daysOpen: number | null;
+  /** Volume della seduta del gap */
+  volume: number;
+  /** Media dei volumi delle 20 sedute precedenti */
+  avgVolume: number;
+  /** Quante volte la media: distingue i gap da notizia da quelli ordinari */
+  volumeRatio: number | null;
 };
 
 export const FILL_HORIZONS = [5, 20, 60] as const;
@@ -114,6 +120,22 @@ export function analyzeGaps(
       }
     }
 
+    // Volume relativo della seduta del gap. Nella classificazione classica
+    // un gap su volume elevato nasce da una notizia e tende a proseguire,
+    // uno su volume ordinario si richiude in fretta: e' un'ipotesi che i
+    // dati raccolti qui permettono di verificare invece di assumere.
+    let volSum = 0;
+    let volCount = 0;
+    for (let k = Math.max(0, i - 20); k < i; k++) {
+      const v = candles[k].v;
+      if (v && v > 0) {
+        volSum += v;
+        volCount++;
+      }
+    }
+    const avgVolume = volCount >= 5 ? volSum / volCount : 0;
+    const volume = cur.v ?? 0;
+
     allGaps.push({
       ticker,
       direction,
@@ -127,6 +149,9 @@ export function analyzeGaps(
       fillDate: fillIdx != null ? isoDate(candles[fillIdx].t) : null,
       daysToFill: fillIdx != null ? fillIdx - i : null,
       daysOpen: filled ? null : lastIdx - i,
+      volume,
+      avgVolume,
+      volumeRatio: avgVolume > 0 && volume > 0 ? volume / avgVolume : null,
     });
   }
 
@@ -174,8 +199,29 @@ export function analyzeGaps(
 /** Riga per la notifica Telegram. */
 export function formatGapLine(g: Gap): string {
   const arrow = g.direction === 'up' ? '⬆️' : '⬇️';
+  const vol =
+    g.volumeRatio != null ? ` · vol ${g.volumeRatio.toFixed(1)}×` : '';
   return (
-    `${arrow} <b>${g.ticker}</b> ${g.gapPct >= 0 ? '+' : ''}${g.gapPct.toFixed(1)}% · ` +
-    `apertura ${g.openPrice.toFixed(2)} · chiude a ${g.targetPrice.toFixed(2)}`
+    `${arrow} <b>${g.ticker}</b> ${g.gapPct >= 0 ? '+' : ''}${g.gapPct.toFixed(1)}%${vol}\n` +
+    `   apertura ${g.openPrice.toFixed(2)} · chiude a ${g.targetPrice.toFixed(2)}`
   );
+}
+
+/**
+ * Fasce di volume usate per confrontare i tassi di chiusura.
+ * La domanda a cui servono: i gap su volume elevato si richiudono
+ * davvero meno di quelli ordinari?
+ */
+export const VOLUME_BUCKETS = [
+  { key: 'low', label: 'fino a 1,5×', min: 0, max: 1.5 },
+  { key: 'mid', label: 'da 1,5× a 3×', min: 1.5, max: 3 },
+  { key: 'high', label: 'oltre 3×', min: 3, max: Infinity },
+] as const;
+
+export function bucketOf(ratio: number | null): string | null {
+  if (ratio == null) return null;
+  for (const b of VOLUME_BUCKETS) {
+    if (ratio >= b.min && ratio < b.max) return b.key;
+  }
+  return null;
 }

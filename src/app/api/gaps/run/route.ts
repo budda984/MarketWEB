@@ -86,6 +86,9 @@ export async function POST(req: Request) {
             fill_date: g.fillDate,
             days_to_fill: g.daysToFill,
             days_open: g.daysOpen,
+            volume: g.volume || null,
+            avg_volume: g.avgVolume || null,
+            volume_ratio: g.volumeRatio,
             market,
             updated_at: new Date().toISOString(),
           });

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { VOLUME_BUCKETS, bucketOf } from '@/lib/gaps';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -59,5 +60,62 @@ export async function GET(req: Request) {
     .select('*', { count: 'exact', head: true })
     .eq('filled', false);
 
-  return NextResponse.json({ gaps: gaps ?? [], stats, totalOpen: count ?? 0 });
+  // ------------------------------------------------------------------
+  // Confronto dei tassi di chiusura per fascia di volume.
+  //
+  // La domanda: i gap su volume elevato si richiudono davvero meno di
+  // quelli ordinari? Il calcolo va fatto sull'intero archivio, non sui
+  // soli gap in elenco, altrimenti il filtro attivo distorcerebbe il
+  // risultato.
+  //
+  // Un gap conta per l'orizzonte h solo se ha avuto almeno h sedute a
+  // disposizione: o si e' chiuso, oppure risulta aperto da almeno h
+  // sedute. Senza questa condizione i gap recenti abbasserebbero il
+  // tasso per il solo fatto di essere recenti.
+  // ------------------------------------------------------------------
+  const { data: allGaps } = await supabase
+    .from('price_gaps')
+    .select('volume_ratio, days_to_fill, days_open, filled')
+    .not('volume_ratio', 'is', null)
+    .limit(20000);
+
+  const HORIZONS = [5, 20, 60];
+  const buckets: Record<
+    string,
+    { label: string; total: number; horizons: Record<number, { filled: number; eligible: number }> }
+  > = {};
+  for (const b of VOLUME_BUCKETS) {
+    buckets[b.key] = {
+      label: b.label,
+      total: 0,
+      horizons: Object.fromEntries(
+        HORIZONS.map((h) => [h, { filled: 0, eligible: 0 }])
+      ),
+    };
+  }
+
+  for (const g of allGaps ?? []) {
+    const key = bucketOf(g.volume_ratio == null ? null : Number(g.volume_ratio));
+    if (!key || !buckets[key]) continue;
+    buckets[key].total += 1;
+    const dtf = g.days_to_fill == null ? null : Number(g.days_to_fill);
+    const dop = g.days_open == null ? null : Number(g.days_open);
+    for (const h of HORIZONS) {
+      // Un gap gia' chiuso ha per definizione avuto il tempo necessario
+      // per esserlo; uno ancora aperto conta solo se lo e' da almeno h
+      // sedute, altrimenti non ha ancora avuto occasione di chiudersi.
+      const eligible = dtf != null ? true : dop != null && dop >= h;
+      if (!eligible) continue;
+      buckets[key].horizons[h].eligible += 1;
+      if (dtf != null && dtf <= h) buckets[key].horizons[h].filled += 1;
+    }
+  }
+
+  return NextResponse.json({
+    gaps: gaps ?? [],
+    stats,
+    totalOpen: count ?? 0,
+    volumeBuckets: buckets,
+    volumeAnalysisSize: (allGaps ?? []).length,
+  });
 }

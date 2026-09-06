@@ -21,7 +21,6 @@ import {
   MessagesSquare,
   Crosshair,
   Rows3,
-  BarChart3,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
@@ -40,7 +39,6 @@ import WeeklyTrendView from './WeeklyTrendView';
 import SocialView from './SocialView';
 import OpportunitiesView from './OpportunitiesView';
 import GapsView from './GapsView';
-import VolumeView from './VolumeView';
 
 type View =
   | 'chart'
@@ -55,8 +53,7 @@ type View =
   | 'weekly'
   | 'social'
   | 'radar'
-  | 'gaps'
-  | 'volume';
+  | 'gaps';
 
 type Props = {
   userEmail: string;
@@ -261,12 +258,6 @@ export default function Dashboard({
             label="Top mover"
           />
           <NavButton
-            active={view === 'volume'}
-            onClick={() => setView('volume')}
-            icon={<BarChart3 className="w-4 h-4" />}
-            label="Volumi"
-          />
-          <NavButton
             active={view === 'gaps'}
             onClick={() => setView('gaps')}
             icon={<Rows3 className="w-4 h-4" />}
@@ -468,12 +459,6 @@ export default function Dashboard({
                   Top mover
                 </span>
               )}
-              {view === 'volume' && (
-                <span className="font-semibold flex items-center gap-1.5">
-                  <BarChart3 className="w-4 h-4 flex-shrink-0" />
-                  Volumi
-                </span>
-              )}
               {view === 'gaps' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <Rows3 className="w-4 h-4 flex-shrink-0" />
@@ -540,7 +525,6 @@ export default function Dashboard({
           {view === 'weekly' && <WeeklyTrendView onOpenTicker={onOpenTicker} />}
           {view === 'radar' && <OpportunitiesView onOpenTicker={onOpenTicker} />}
           {view === 'gaps' && <GapsView onOpenTicker={onOpenTicker} />}
-          {view === 'volume' && <VolumeView onOpenTicker={onOpenTicker} />}
           {view === 'social' && <SocialView onOpenTicker={onOpenTicker} />}
           {view === 'movers' && <MoversView onOpenTicker={onOpenTicker} />}
           {view === 'indices' && <IndicesView onOpenTicker={onOpenTicker} />}

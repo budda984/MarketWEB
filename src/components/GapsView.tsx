@@ -24,6 +24,15 @@ type Gap = {
   days_to_fill: number | null;
   days_open: number | null;
   market: string | null;
+  volume: number | null;
+  avg_volume: number | null;
+  volume_ratio: number | null;
+};
+
+type Bucket = {
+  label: string;
+  total: number;
+  horizons: Record<number, { filled: number; eligible: number }>;
 };
 
 type Stat = {
@@ -52,6 +61,12 @@ export default function GapsView({ onOpenTicker }: Props) {
   const [state, setState] = useState<'open' | 'filled'>('open');
   const [direction, setDirection] = useState('all');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'date' | 'volume' | 'size'>('date');
+  const [minVolRatio, setMinVolRatio] = useState(0);
+  const [bucketsData, setBucketsData] = useState<Record<string, Bucket> | null>(
+    null
+  );
+  const [analysisSize, setAnalysisSize] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,6 +85,8 @@ export default function GapsView({ onOpenTicker }: Props) {
       }
       setGaps(d.gaps ?? []);
       setTotalOpen(d.totalOpen ?? 0);
+      setBucketsData(d.volumeBuckets ?? null);
+      setAnalysisSize(d.volumeAnalysisSize ?? 0);
       const map: Record<string, Stat> = {};
       for (const s of d.stats ?? []) map[s.ticker] = s;
       setStats(map);
@@ -123,6 +140,24 @@ export default function GapsView({ onOpenTicker }: Props) {
     }
   }
 
+  // Filtro e ordinamento avvengono qui: la lista arriva dal server
+  // ordinata per data, il resto e' preferenza di consultazione
+  const visible = gaps
+    .filter((g) =>
+      minVolRatio > 0
+        ? g.volume_ratio != null && Number(g.volume_ratio) >= minVolRatio
+        : true
+    )
+    .sort((a, b) => {
+      if (sortBy === 'volume') {
+        return (Number(b.volume_ratio) || 0) - (Number(a.volume_ratio) || 0);
+      }
+      if (sortBy === 'size') {
+        return Math.abs(Number(b.gap_pct)) - Math.abs(Number(a.gap_pct));
+      }
+      return b.gap_date.localeCompare(a.gap_date);
+    });
+
   function pct(filled: number, eligible: number): string {
     if (!eligible) return '—';
     return `${Math.round((filled / eligible) * 100)}%`;
@@ -166,6 +201,36 @@ export default function GapsView({ onOpenTicker }: Props) {
           </select>
         </div>
 
+        <div className="flex items-center gap-3 flex-wrap">
+          <label className="flex items-center gap-1.5 text-xs">
+            <span className="text-brand-muted">Ordina per:</span>
+            <select
+              value={sortBy}
+              onChange={(e) =>
+                setSortBy(e.target.value as 'date' | 'volume' | 'size')
+              }
+              className="input text-xs py-1"
+            >
+              <option value="date">Data</option>
+              <option value="volume">Volume relativo</option>
+              <option value="size">Ampiezza del gap</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs">
+            <span className="text-brand-muted">Volume minimo:</span>
+            <select
+              value={minVolRatio}
+              onChange={(e) => setMinVolRatio(Number(e.target.value))}
+              className="input text-xs py-1"
+            >
+              <option value={0}>qualsiasi</option>
+              <option value={1.5}>1,5× la media</option>
+              <option value={3}>3× la media</option>
+              <option value={5}>5× la media</option>
+            </select>
+          </label>
+        </div>
+
         <button
           onClick={run}
           disabled={running}
@@ -204,7 +269,7 @@ export default function GapsView({ onOpenTicker }: Props) {
         </div>
       )}
 
-      {!loading && gaps.length === 0 && !err && (
+      {!loading && visible.length === 0 && !err && (
         <div className="card p-8 text-center space-y-2">
           <div className="text-4xl">📐</div>
           <div className="text-sm text-brand-muted">
@@ -214,10 +279,14 @@ export default function GapsView({ onOpenTicker }: Props) {
         </div>
       )}
 
-      {gaps.length > 0 && (
+      {bucketsData && analysisSize > 0 && (
+        <VolumeComparison buckets={bucketsData} sampleSize={analysisSize} />
+      )}
+
+      {visible.length > 0 && (
         <div className="card overflow-hidden">
           <div className="divide-y divide-brand-border">
-            {gaps.map((g) => {
+            {visible.map((g) => {
               const st = stats[g.ticker];
               const up = g.direction === 'up';
               return (
@@ -242,6 +311,17 @@ export default function GapsView({ onOpenTicker }: Props) {
                           {Number(g.gap_pct) >= 0 ? '+' : ''}
                           {Number(g.gap_pct).toFixed(1)}%
                         </span>
+                        {g.volume_ratio != null && (
+                          <span
+                            className={`tag text-xs ${
+                              Number(g.volume_ratio) >= 3
+                                ? 'bg-brand-green/20 text-brand-green'
+                                : 'bg-brand-panel text-brand-muted'
+                            }`}
+                          >
+                            vol {Number(g.volume_ratio).toFixed(1)}×
+                          </span>
+                        )}
                         {!g.filled && g.days_open != null && (
                           <span className="tag bg-yellow-400/20 text-yellow-400 text-xs">
                             aperto da {g.days_open} sedute
@@ -337,6 +417,96 @@ export default function GapsView({ onOpenTicker }: Props) {
           Ogni percentuale è calcolata solo sui gap che hanno avuto almeno
           quel numero di sedute successive: contare i gap recenti fra i non
           chiusi abbasserebbe il dato per il solo fatto che sono recenti.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Confronto dei tassi di chiusura per fascia di volume.
+ *
+ * E' la risposta alla domanda che ha motivato l'incrocio: i gap su
+ * volume elevato si richiudono meno di quelli ordinari? Se le tre righe
+ * mostrano percentuali simili, il volume non aggiunge informazione.
+ */
+function VolumeComparison({
+  buckets,
+  sampleSize,
+}: {
+  buckets: Record<string, Bucket>;
+  sampleSize: number;
+}) {
+  const keys = ['low', 'mid', 'high'];
+  const HOR = [5, 20, 60];
+
+  function pctOf(b: Bucket, h: number): string {
+    const x = b.horizons[h];
+    if (!x || x.eligible === 0) return '—';
+    return `${Math.round((x.filled / x.eligible) * 100)}%`;
+  }
+
+  const anyData = keys.some((k) => buckets[k]?.total > 0);
+  if (!anyData) return null;
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-3 sm:px-4 py-2 bg-brand-panel/40 border-b border-brand-border">
+        <span className="text-xs font-semibold text-brand-muted uppercase tracking-wide">
+          Il volume cambia qualcosa?
+        </span>
+      </div>
+
+      <div className="p-3 sm:p-4 space-y-3">
+        <div className="text-xs text-brand-muted break-words">
+          Percentuale di gap richiusi entro 5, 20 e 60 sedute, divisa per
+          volume della seduta del gap. Base: {sampleSize} gap.
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-brand-muted">
+                <th className="text-left font-normal pb-1.5">Volume</th>
+                {HOR.map((h) => (
+                  <th key={h} className="text-right font-normal pb-1.5 px-1">
+                    {h} sed.
+                  </th>
+                ))}
+                <th className="text-right font-normal pb-1.5">casi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((k) => {
+                const b = buckets[k];
+                if (!b) return null;
+                return (
+                  <tr key={k} className="border-t border-brand-border">
+                    <td className="py-2 pr-2">{b.label}</td>
+                    {HOR.map((h) => (
+                      <td
+                        key={h}
+                        className="py-2 px-1 text-right font-mono font-semibold"
+                      >
+                        {pctOf(b, h)}
+                      </td>
+                    ))}
+                    <td className="py-2 text-right text-brand-muted font-mono">
+                      {b.total}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <p className="text-xs text-brand-muted break-words">
+          Se le tre righe mostrano percentuali simili, il volume non
+          aggiunge informazione sulla probabilità di chiusura e conviene
+          saperlo. Una differenza vale la pena solo se è ampia e regolare
+          su tutti e tre gli orizzonti: uno scarto di pochi punti su una
+          sola colonna è rumore.
         </p>
       </div>
     </div>
