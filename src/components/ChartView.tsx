@@ -21,6 +21,7 @@ import { localSearch } from '@/lib/ticker-names';
 import AlertsPanel from './AlertsPanel';
 import AddToWatchlistButton from './AddToWatchlistButton';
 import LightweightChart from './LightweightChart';
+import ValuationCard from './ValuationCard';
 
 type Props = {
   ticker: string;
@@ -308,6 +309,8 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
             })}
             theme="dark"
           />
+
+          <ValuationCard ticker={ticker} />
 
           {/* Pannello 2: Heikin Ashi */}
           <div className="card p-3 sm:p-5">
