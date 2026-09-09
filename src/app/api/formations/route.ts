@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { yahooDownloadMany } from '@/lib/yahoo';
 import { MARKETS, type MarketKey, getMarketForTicker } from '@/lib/tickers';
 import { detectFormations, type Formation } from '@/lib/formations';
@@ -48,6 +49,52 @@ export async function POST(req: Request) {
         }
       }
       i += CHUNK;
+    }
+
+    // Salvataggio: le figure restano in archivio fra una scansione e
+    // l'altra, cosi' non si perdono quelle viste in precedenza e si sa
+    // da quando sono sotto osservazione.
+    let saveError: string | null = null;
+    if (found.length > 0) {
+      const admin = createAdminClient();
+      const now = new Date().toISOString();
+      const seen = new Map<string, Record<string, unknown>>();
+      for (const f of found) {
+        seen.set(`${f.ticker}|${f.kind}`, {
+          ticker: f.ticker,
+          kind: f.kind,
+          state: f.state,
+          neckline: f.neckline,
+          price: f.price,
+          distance_to_neckline_pct: f.distanceToNecklinePct,
+          depth_pct: f.depthPct,
+          target: f.target,
+          bars_span: f.barsSpan,
+          points: f.points,
+          market: f.market,
+          last_seen: now,
+          first_state: f.state,
+        });
+      }
+      const { error } = await admin
+        .from('formations')
+        .upsert(Array.from(seen.values()), {
+          onConflict: 'ticker,kind',
+          ignoreDuplicates: false,
+        });
+      if (error) saveError = error.message;
+    }
+
+    if (saveError) {
+      const missing = /schema cache|does not exist/i.test(saveError);
+      return NextResponse.json(
+        {
+          error: missing
+            ? "La tabella 'formations' non esiste ancora: esegui la migration 013_formations.sql."
+            : `Salvataggio fallito: ${saveError}`,
+        },
+        { status: 500 }
+      );
     }
 
     const done = i >= universe.length;

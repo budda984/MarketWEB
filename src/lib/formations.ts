@@ -90,7 +90,7 @@ type Opts = {
 const DEFAULTS: Opts = {
   leftBars: 6,
   rightBars: 6,
-  levelTolerance: 0.04,
+  levelTolerance: 0.02,
   headDepthMin: 0.05,
   minDepthPct: 6,
   durationMin: 25,
@@ -158,6 +158,20 @@ function hasPriorDecline(
   const end = candles[idx].l;
   if (start <= 0) return false;
   return (start - end) / start >= minDrop;
+}
+
+/** Punto piu' basso in un intervallo: e' il secondo minimo reale. */
+function troughBetween(
+  candles: OHLCV[],
+  from: number,
+  to: number
+): { idx: number; price: number } | null {
+  if (to - from < 2) return null;
+  let best = { idx: -1, price: Infinity };
+  for (let i = from + 1; i <= to; i++) {
+    if (candles[i].l < best.price) best = { idx: i, price: candles[i].l };
+  }
+  return best.idx >= 0 ? best : null;
 }
 
 /** Massimo delle chiusure in un intervallo, escludendo gli estremi. */
@@ -240,6 +254,8 @@ export function detectFormations(
     const depthPct = ((neckline - head.price) / neckline) * 100;
     if (depthPct < o.minDepthPct) continue;
 
+    // Le due spalle devono stare sullo stesso livello, non solo essere
+    // entrambe sopra la testa
     // Eventuale spalla destra gia' formata
     const rsCandidates = lows.filter(
       (p) =>
@@ -331,16 +347,24 @@ export function detectFormations(
     const depthPct = ((neckline - l1.price) / neckline) * 100;
     if (depthPct < o.minDepthPct) continue;
 
-    // Secondo minimo confermato, allo stesso livello e dopo il picco
-    const l2Candidates = lows.filter(
-      (p) =>
-        p.idx > peak.idx &&
-        Math.abs(p.price - l1.price) / l1.price <= o.levelTolerance &&
-        // Non deve rompere il primo minimo verso il basso
-        p.price >= l1.price * (1 - o.levelTolerance)
+    // Il secondo minimo e' il punto PIU' BASSO dopo il picco, non
+    // l'ultimo pivot che rientrava nella tolleranza. Prendere un pivot
+    // intermedio quando il prezzo e' poi sceso ancora significa
+    // segnalare una figura che nel frattempo si e' rotta.
+    const trough = troughBetween(candles, peak.idx, lastIdx);
+    if (!trough) continue;
+
+    // Il minimo reale deve stare allo stesso livello del primo: e' la
+    // condizione che definisce un doppio minimo. Se e' sceso sotto oltre
+    // la tolleranza, il supporto ha ceduto e la figura non c'e'.
+    const levelDiff = Math.abs(trough.price - l1.price) / l1.price;
+    if (levelDiff > o.levelTolerance) continue;
+
+    // E' gia' confermato come pivot, oppure si sta ancora formando?
+    const l2 = lows.find(
+      (p) => p.idx > peak.idx && Math.abs(p.idx - trough.idx) <= 2
     );
-    const l2: Pivot | null =
-      l2Candidates.length > 0 ? l2Candidates[l2Candidates.length - 1] : null;
+    const troughIsRecent = lastIdx - trough.idx <= o.rightBars;
 
     // Simmetria: il secondo minimo non deve arrivare troppo presto
     if (l2) {
@@ -352,34 +376,26 @@ export function detectFormations(
       }
     }
 
-    const distFromLow = Math.abs(price - l1.price) / l1.price;
-
     let state: FormationState;
     if (l2 && price > neckline) {
       state = 'confirmed';
-    } else if (l2) {
+    } else if (l2 && !troughIsRecent) {
+      // Minimo confermato e ormai alle spalle: struttura completa
       state = 'right_shoulder';
-    } else if (
-      distFromLow <= o.returnTolerance &&
-      lastIdx > peak.idx &&
-      price >= l1.price * (1 - o.levelTolerance)
-    ) {
-      state = 'forming';
     } else {
-      continue;
+      // Il minimo si sta ancora formando adesso
+      state = 'forming';
     }
 
     const points: FormationPoint[] = [
       { time: candles[l1.idx].t, price: l1.price, label: 'Primo minimo' },
       { time: candles[peak.idx].t, price: peak.price, label: 'Massimo' },
     ];
-    if (l2) {
-      points.push({
-        time: candles[l2.idx].t,
-        price: l2.price,
-        label: 'Secondo minimo',
-      });
-    }
+    points.push({
+      time: candles[trough.idx].t,
+      price: trough.price,
+      label: troughIsRecent ? 'Secondo minimo (in corso)' : 'Secondo minimo',
+    });
 
     out.push({
       ticker,

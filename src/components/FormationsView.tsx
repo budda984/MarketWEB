@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Shapes,
   Loader2,
@@ -8,6 +8,7 @@ import {
   ExternalLink,
   Info,
 } from 'lucide-react';
+import LastScan from './LastScan';
 import {
   FORMATION_LABELS,
   stateLabel,
@@ -28,6 +29,7 @@ type Formation = {
   lastDate: string;
   market: string | null;
   points: Array<{ time: number; price: number; label: string }>;
+  firstSeen?: string;
 };
 
 const STATE_STYLE: Record<FormationState, string> = {
@@ -45,6 +47,47 @@ export default function FormationsView({ onOpenTicker }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [kindFilter, setKindFilter] = useState<'all' | FormationKind>('all');
   const [stateFilter, setStateFilter] = useState<'all' | FormationState>('all');
+  const [lastScan, setLastScan] = useState<string | null>(null);
+
+  // All'apertura mostro l'archivio: le figure viste nelle scansioni
+  // precedenti restano disponibili invece di sparire
+  const loadStored = useCallback(async () => {
+    try {
+      const r = await fetch('/api/formations/recent');
+      const text = await r.text();
+      if (!text) return;
+      const d = JSON.parse(text);
+      if (d.error) {
+        setErr(d.error);
+        return;
+      }
+      const stored = (d.formations ?? []).map(
+        (f: Record<string, unknown>) => ({
+          ticker: f.ticker,
+          kind: f.kind,
+          state: f.state,
+          neckline: Number(f.neckline),
+          price: Number(f.price),
+          distanceToNecklinePct: Number(f.distance_to_neckline_pct ?? 0),
+          depthPct: Number(f.depth_pct ?? 0),
+          target: Number(f.target ?? 0),
+          barsSpan: Number(f.bars_span ?? 0),
+          lastDate: String(f.last_seen ?? '').slice(0, 10),
+          market: (f.market as string) ?? null,
+          points: (f.points as Formation['points']) ?? [],
+          firstSeen: f.first_seen as string,
+        })
+      );
+      setItems(stored);
+      setLastScan(d.lastScan ?? null);
+    } catch {
+      // archivio non disponibile: si puo' comunque scansionare
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStored();
+  }, [loadStored]);
 
   async function run() {
     setRunning(true);
@@ -80,6 +123,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
         offset = d.nextOffset;
       }
       setProgress(`Completato · ${all.length} figure`);
+      await loadStored();
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -118,6 +162,8 @@ export default function FormationsView({ onOpenTicker }: Props) {
             S&amp;P 500 e NASDAQ
           </span>
         </div>
+
+        <LastScan at={lastScan} />
 
         <button
           onClick={run}
@@ -246,6 +292,16 @@ export default function FormationsView({ onOpenTicker }: Props) {
                       </>
                     )}{' '}
                     · {f.barsSpan} sedute
+                    {f.firstSeen && (
+                      <>
+                        {' '}
+                        · vista dal{' '}
+                        {new Date(f.firstSeen).toLocaleDateString('it-IT', {
+                          day: '2-digit',
+                          month: '2-digit',
+                        })}
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
