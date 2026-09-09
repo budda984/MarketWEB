@@ -22,6 +22,7 @@ import {
   Crosshair,
   Rows3,
   Scale,
+  FlaskConical,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
@@ -41,6 +42,7 @@ import SocialView from './SocialView';
 import OpportunitiesView from './OpportunitiesView';
 import GapsView from './GapsView';
 import ValuationsView from './ValuationsView';
+import PatternTestView from './PatternTestView';
 
 type View =
   | 'chart'
@@ -56,7 +58,8 @@ type View =
   | 'social'
   | 'radar'
   | 'gaps'
-  | 'valuations';
+  | 'valuations'
+  | 'patterntest';
 
 type Props = {
   userEmail: string;
@@ -285,6 +288,12 @@ export default function Dashboard({
             label="Backtest"
           />
           <NavButton
+            active={view === 'patterntest'}
+            onClick={() => setView('patterntest')}
+            icon={<FlaskConical className="w-4 h-4" />}
+            label="Verifica figure"
+          />
+          <NavButton
             active={view === 'settings'}
             onClick={() => setView('settings')}
             icon={<Settings className="w-4 h-4" />}
@@ -486,6 +495,12 @@ export default function Dashboard({
                   Indici
                 </span>
               )}
+              {view === 'patterntest' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <FlaskConical className="w-4 h-4 flex-shrink-0" />
+                  Verifica figure
+                </span>
+              )}
               {view === 'settings' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <Settings className="w-4 h-4 flex-shrink-0" />
@@ -541,6 +556,7 @@ export default function Dashboard({
           {view === 'radar' && <OpportunitiesView onOpenTicker={onOpenTicker} />}
           {view === 'gaps' && <GapsView onOpenTicker={onOpenTicker} />}
           {view === 'valuations' && <ValuationsView onOpenTicker={onOpenTicker} />}
+          {view === 'patterntest' && <PatternTestView />}
           {view === 'social' && <SocialView onOpenTicker={onOpenTicker} />}
           {view === 'movers' && <MoversView onOpenTicker={onOpenTicker} />}
           {view === 'indices' && <IndicesView onOpenTicker={onOpenTicker} />}
