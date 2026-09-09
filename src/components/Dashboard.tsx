@@ -22,6 +22,7 @@ import {
   Crosshair,
   Rows3,
   Scale,
+  ArrowLeft,
   Shapes,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
@@ -60,6 +61,24 @@ type View =
   | 'gaps'
   | 'valuations'
   | 'formations';
+
+const VIEW_LABELS: Record<View, string> = {
+  chart: 'Chart',
+  signals: 'Segnali',
+  backtest: 'Backtest',
+  settings: 'Settings',
+  alerts: 'Avvisi',
+  indices: 'Indici',
+  screener: 'Screener',
+  insider: 'Insider',
+  movers: 'Top mover',
+  weekly: 'Trend settimanale',
+  social: 'Social',
+  radar: 'Radar',
+  gaps: 'Gap',
+  valuations: 'Valutazioni',
+  formations: 'Figure',
+};
 
 type Props = {
   userEmail: string;
@@ -127,10 +146,52 @@ export default function Dashboard({
     };
   }, []);
 
-  const onOpenTicker = useCallback((ticker: string) => {
-    setSelectedTicker(ticker);
-    setView('chart');
+  // Vista da cui si e' arrivati al grafico: senza, uscire dal titolo
+  // significava perdere la scheda che si stava consultando
+  const [cameFrom, setCameFrom] = useState<View | null>(null);
+
+  // La vista viene riflessa nell'indirizzo. Serve a due cose: il tasto
+  // indietro del browser torna alla scheda precedente invece di uscire
+  // dall'app, e un ricaricamento non riporta alla schermata iniziale.
+  useEffect(() => {
+    const applyFromHash = () => {
+      const raw = window.location.hash.replace('#', '');
+      const [v, t] = raw.split('/');
+      if (v && v in VIEW_LABELS) {
+        setView(v as View);
+        if (t) setSelectedTicker(decodeURIComponent(t));
+      }
+    };
+    applyFromHash();
+    window.addEventListener('popstate', applyFromHash);
+    window.addEventListener('hashchange', applyFromHash);
+    return () => {
+      window.removeEventListener('popstate', applyFromHash);
+      window.removeEventListener('hashchange', applyFromHash);
+    };
   }, []);
+
+  // Unico punto in cui la vista cambia: cosi' l'indirizzo resta sempre
+  // allineato senza doverlo aggiornare in ogni pulsante
+  useEffect(() => {
+    const target =
+      view === 'chart' && selectedTicker
+        ? `#chart/${encodeURIComponent(selectedTicker)}`
+        : `#${view}`;
+    if (window.location.hash !== target) {
+      window.history.pushState({ view, selectedTicker }, '', target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, selectedTicker]);
+
+  const onOpenTicker = useCallback(
+    (ticker: string) => {
+      setSelectedTicker(ticker);
+      setCameFrom((prev) => (view === 'chart' ? prev : view));
+      setView('chart');
+    },
+    [view]
+  );
 
   const handleScan = async () => {
     setScanning(true);
@@ -407,7 +468,22 @@ export default function Dashboard({
               <Menu className="w-5 h-5" />
             </button>
 
-            <div className="text-sm truncate min-w-0">
+            <div className="text-sm truncate min-w-0 flex items-center gap-1">
+              {view === 'chart' && cameFrom && (
+                <button
+                  onClick={() => {
+                    setView(cameFrom);
+                    setCameFrom(null);
+                  }}
+                  className="flex items-center gap-1 text-xs text-brand-muted hover:text-brand-text transition mr-1 flex-shrink-0"
+                  title={`Torna a ${VIEW_LABELS[cameFrom]}`}
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span className="hidden sm:inline">
+                    {VIEW_LABELS[cameFrom]}
+                  </span>
+                </button>
+              )}
               {view === 'chart' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <LineChart className="w-4 h-4 flex-shrink-0" />
