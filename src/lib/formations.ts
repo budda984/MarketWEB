@@ -26,9 +26,19 @@ export const FORMATION_LABELS: Record<FormationKind, string> = {
   DOUBLE_BOTTOM: 'Doppio minimo',
 };
 
+/**
+ * Le etichette cambiano con la figura: parlare di "spalla destra" per un
+ * doppio minimo non ha senso.
+ */
+export function stateLabel(kind: FormationKind, state: FormationState): string {
+  if (state === 'confirmed') return 'Linea del collo rotta';
+  if (state === 'forming') return 'In formazione';
+  return kind === 'IHS' ? 'Spalla destra completata' : 'Secondo minimo formato';
+}
+
 export const STATE_LABELS: Record<FormationState, string> = {
   forming: 'In formazione',
-  right_shoulder: 'Spalla destra completata',
+  right_shoulder: 'Struttura completata',
   confirmed: 'Linea del collo rotta',
 };
 
@@ -78,15 +88,24 @@ type Opts = {
 };
 
 const DEFAULTS: Opts = {
-  leftBars: 5,
-  rightBars: 5,
-  levelTolerance: 0.06,
-  headDepthMin: 0.03,
-  minDepthPct: 5,
-  durationMin: 15,
+  leftBars: 6,
+  rightBars: 6,
+  levelTolerance: 0.04,
+  headDepthMin: 0.05,
+  minDepthPct: 6,
+  durationMin: 25,
   durationMax: 120,
-  returnTolerance: 0.07,
+  returnTolerance: 0.04,
 };
+
+/** Massima inclinazione ammessa per la linea del collo. */
+const NECKLINE_SLOPE_MAX = 0.05;
+/** Massima asimmetria temporale fra i due lati della figura. */
+const TIME_ASYMMETRY_MAX = 0.6;
+/** Discesa minima che deve precedere la figura: e' un'inversione. */
+const PRIOR_DECLINE_MIN = 0.06;
+/** Risalita minima da un minimo perche' sia strutturale e non un ritracciamento. */
+const PIVOT_PROMINENCE_MIN = 0.04;
 
 function isoDate(t: number): string {
   return new Date(t * 1000).toISOString().slice(0, 10);
@@ -103,6 +122,56 @@ function maxBetween(
     if (candles[i].h > best.price) best = { idx: i, price: candles[i].h };
   }
   return best;
+}
+
+/**
+ * Un minimo e' strutturale solo se il prezzo poi risale in modo
+ * apprezzabile: altrimenti e' una pausa dentro un movimento, non un
+ * punto di inversione. E' il controllo che mancava, ed e' il motivo per
+ * cui comparivano spalle pescate in mezzo a un rialzo.
+ */
+function prominence(candles: OHLCV[], lowIdx: number, window: number): number {
+  const to = Math.min(candles.length - 1, lowIdx + window);
+  let maxAfter = -Infinity;
+  for (let i = lowIdx; i <= to; i++) {
+    if (candles[i].h > maxAfter) maxAfter = candles[i].h;
+  }
+  const low = candles[lowIdx].l;
+  if (!Number.isFinite(maxAfter) || low <= 0) return 0;
+  return (maxAfter - low) / low;
+}
+
+/**
+ * Una figura di inversione richiede che prima ci fosse una discesa.
+ * Senza questo vincolo qualunque oscillazione dentro un rialzo puo'
+ * assomigliare a un testa e spalle rovesciato.
+ */
+function hasPriorDecline(
+  candles: OHLCV[],
+  idx: number,
+  lookback: number,
+  minDrop: number
+): boolean {
+  const from = idx - lookback;
+  if (from < 0) return false;
+  const start = candles[from].c;
+  const end = candles[idx].l;
+  if (start <= 0) return false;
+  return (start - end) / start >= minDrop;
+}
+
+/** Massimo delle chiusure in un intervallo, escludendo gli estremi. */
+function peakBetween(
+  candles: OHLCV[],
+  from: number,
+  to: number
+): { idx: number; price: number } | null {
+  if (to - from < 3) return null;
+  let best = { idx: -1, price: -Infinity };
+  for (let i = from + 1; i < to; i++) {
+    if (candles[i].h > best.price) best = { idx: i, price: candles[i].h };
+  }
+  return best.idx >= 0 ? best : null;
 }
 
 export function detectFormations(
@@ -125,50 +194,86 @@ export function detectFormations(
 
   // ------------------------------------------------------------------
   // TESTA E SPALLE ROVESCIATO
-  // Servono spalla sinistra e testa confermate; la spalla destra e' il
-  // presente.
+  //
+  // Sequenza richiesta: discesa, spalla sinistra, risalita al primo
+  // picco, discesa piu' profonda (testa), risalita al secondo picco,
+  // spalla destra all'altezza della sinistra. La linea del collo unisce
+  // i DUE PICCHI INTERMEDI, non il massimo assoluto del periodo.
   // ------------------------------------------------------------------
   for (let i = lows.length - 1; i >= 1; i--) {
     const head = lows[i];
     const ls = lows[i - 1];
 
-    // La testa deve essere piu' profonda della spalla sinistra
+    // La testa deve essere nettamente piu' profonda della spalla
     if (head.price >= ls.price * (1 - o.headDepthMin)) continue;
 
     const span = lastIdx - ls.idx;
     if (span < o.durationMin || span > o.durationMax) continue;
 
-    // Linea del collo: massimo fra spalla sinistra e testa, proiettato
-    const neckLeft = maxBetween(candles, ls.idx, head.idx);
-    const neckRight = maxBetween(candles, head.idx, lastIdx);
-    const neckline = Math.max(neckLeft.price, neckRight.price);
+    // Entrambi i minimi devono essere strutturali: il prezzo deve essere
+    // risalito in modo apprezzabile dopo ciascuno
+    if (prominence(candles, ls.idx, 25) < PIVOT_PROMINENCE_MIN) continue;
+    if (prominence(candles, head.idx, 25) < PIVOT_PROMINENCE_MIN) continue;
+
+    // Prima della spalla sinistra ci deve essere stata una discesa:
+    // e' una figura di inversione, non un'oscillazione dentro un rialzo
+    if (!hasPriorDecline(candles, ls.idx, 30, PRIOR_DECLINE_MIN)) continue;
+
+    // I due picchi intermedi definiscono il collo
+    const peak1 = peakBetween(candles, ls.idx, head.idx);
+    if (!peak1) continue;
+    const peak2 = peakBetween(candles, head.idx, lastIdx);
+    if (!peak2) continue;
+
+    // Il collo deve essere all'incirca orizzontale: due picchi molto
+    // sfalsati non formano una figura leggibile
+    const slope =
+      Math.abs(peak2.price - peak1.price) / Math.max(peak1.price, peak2.price);
+    if (slope > NECKLINE_SLOPE_MAX) continue;
+
+    const neckline = (peak1.price + peak2.price) / 2;
     if (!Number.isFinite(neckline) || neckline <= 0) continue;
+
+    // Entrambe le spalle devono stare sotto il collo e sopra la testa
+    if (ls.price >= neckline || head.price >= neckline) continue;
 
     const depthPct = ((neckline - head.price) / neckline) * 100;
     if (depthPct < o.minDepthPct) continue;
 
-    // Dove siamo adesso rispetto al livello della spalla sinistra
-    const distFromShoulder = Math.abs(price - ls.price) / ls.price;
-
-    // Eventuale spalla destra gia' formata: un minimo confermato dopo la
-    // testa, a un livello simile alla spalla sinistra
+    // Eventuale spalla destra gia' formata
     const rsCandidates = lows.filter(
       (p) =>
+        p.idx > peak1.idx &&
         p.idx > head.idx &&
         Math.abs(p.price - ls.price) / ls.price <= o.levelTolerance &&
-        p.price > head.price
+        p.price > head.price &&
+        p.price < neckline
     );
     const rs: Pivot | null =
       rsCandidates.length > 0 ? rsCandidates[rsCandidates.length - 1] : null;
+
+    // Simmetria temporale: i due lati devono avere durate confrontabili
+    if (rs) {
+      const leftSpan = head.idx - ls.idx;
+      const rightSpan = rs.idx - head.idx;
+      const avg = (leftSpan + rightSpan) / 2;
+      if (avg > 0 && Math.abs(leftSpan - rightSpan) / avg > TIME_ASYMMETRY_MAX) {
+        continue;
+      }
+    }
+
+    const distFromShoulder = Math.abs(price - ls.price) / ls.price;
 
     let state: FormationState;
     if (price > neckline) {
       state = 'confirmed';
     } else if (rs) {
       state = 'right_shoulder';
-    } else if (distFromShoulder <= o.returnTolerance && price > head.price) {
-      // Il prezzo e' risalito dalla testa e si trova all'altezza della
-      // spalla sinistra: e' il momento in cui la figura si intravede
+    } else if (
+      distFromShoulder <= o.returnTolerance &&
+      price > head.price &&
+      lastIdx > peak2.idx
+    ) {
       state = 'forming';
     } else {
       continue;
@@ -192,8 +297,8 @@ export function detectFormations(
       state,
       points,
       neckline,
-      necklineFrom: { time: candles[neckLeft.idx].t, price: neckline },
-      necklineTo: { time: candles[lastIdx].t, price: neckline },
+      necklineFrom: { time: candles[peak1.idx].t, price: peak1.price },
+      necklineTo: { time: candles[peak2.idx].t, price: peak2.price },
       price,
       distanceToNecklinePct: ((neckline - price) / price) * 100,
       depthPct,
@@ -201,33 +306,51 @@ export function detectFormations(
       barsSpan: span,
       lastDate: isoDate(candles[lastIdx].t),
     });
-    break; // una sola figura per titolo, la piu' recente
+    break;
   }
 
   // ------------------------------------------------------------------
   // DOPPIO MINIMO
-  // Serve il primo minimo confermato; il secondo puo' essere il presente.
+  //
+  // Due minimi allo stesso livello separati da un picco significativo,
+  // preceduti da una discesa. Il secondo minimo non deve scendere sotto
+  // il primo in modo apprezzabile: altrimenti non e' un doppio minimo,
+  // e' una discesa che continua.
   // ------------------------------------------------------------------
   for (let i = lows.length - 1; i >= 0; i--) {
     const l1 = lows[i];
     const span = lastIdx - l1.idx;
     if (span < o.durationMin || span > o.durationMax) continue;
 
-    // Il picco fra il primo minimo e oggi: e' la linea del collo
-    const peak = maxBetween(candles, l1.idx, lastIdx);
-    if (peak.idx <= l1.idx) continue;
+    if (prominence(candles, l1.idx, 25) < PIVOT_PROMINENCE_MIN) continue;
+    if (!hasPriorDecline(candles, l1.idx, 30, PRIOR_DECLINE_MIN)) continue;
+
+    const peak = peakBetween(candles, l1.idx, lastIdx);
+    if (!peak) continue;
     const neckline = peak.price;
     const depthPct = ((neckline - l1.price) / neckline) * 100;
     if (depthPct < o.minDepthPct) continue;
 
-    // Secondo minimo confermato allo stesso livello, dopo il picco
+    // Secondo minimo confermato, allo stesso livello e dopo il picco
     const l2Candidates = lows.filter(
       (p) =>
         p.idx > peak.idx &&
-        Math.abs(p.price - l1.price) / l1.price <= o.levelTolerance
+        Math.abs(p.price - l1.price) / l1.price <= o.levelTolerance &&
+        // Non deve rompere il primo minimo verso il basso
+        p.price >= l1.price * (1 - o.levelTolerance)
     );
     const l2: Pivot | null =
       l2Candidates.length > 0 ? l2Candidates[l2Candidates.length - 1] : null;
+
+    // Simmetria: il secondo minimo non deve arrivare troppo presto
+    if (l2) {
+      const leftSpan = peak.idx - l1.idx;
+      const rightSpan = l2.idx - peak.idx;
+      const avg = (leftSpan + rightSpan) / 2;
+      if (avg > 0 && Math.abs(leftSpan - rightSpan) / avg > TIME_ASYMMETRY_MAX) {
+        continue;
+      }
+    }
 
     const distFromLow = Math.abs(price - l1.price) / l1.price;
 
@@ -236,9 +359,11 @@ export function detectFormations(
       state = 'confirmed';
     } else if (l2) {
       state = 'right_shoulder';
-    } else if (distFromLow <= o.returnTolerance && lastIdx > peak.idx) {
-      // Il prezzo e' tornato all'altezza del primo minimo dopo esserne
-      // risalito: potrebbe formarsi il secondo
+    } else if (
+      distFromLow <= o.returnTolerance &&
+      lastIdx > peak.idx &&
+      price >= l1.price * (1 - o.levelTolerance)
+    ) {
       state = 'forming';
     } else {
       continue;

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import {
   FORMATION_LABELS,
-  STATE_LABELS,
+  stateLabel,
   type FormationKind,
   type FormationState,
 } from '@/lib/formations';
@@ -159,7 +159,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
                 color="text-brand-green"
               />
               <Stat
-                label="Spalla destra"
+                label="Struttura completa"
                 value={counts.right_shoulder}
                 color="text-yellow-400"
               />
@@ -196,7 +196,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
                 >
                   <option value="all">Tutti</option>
                   <option value="confirmed">Collo rotto</option>
-                  <option value="right_shoulder">Spalla destra</option>
+                  <option value="right_shoulder">Struttura completata</option>
                   <option value="forming">In formazione</option>
                 </select>
               </label>
@@ -228,7 +228,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
                   <div className="flex items-baseline gap-2 flex-wrap">
                     <span className="font-bold text-sm">{f.ticker}</span>
                     <span className={`tag text-xs ${STATE_STYLE[f.state]}`}>
-                      {STATE_LABELS[f.state]}
+                      {stateLabel(f.kind, f.state)}
                     </span>
                     <span className="text-xs text-brand-muted">
                       {FORMATION_LABELS[f.kind]}
@@ -271,9 +271,10 @@ export default function FormationsView({ onOpenTicker }: Props) {
           figura si intravede, ma potrebbe non completarsi.
         </p>
         <p className="break-words">
-          <strong>Spalla destra completata:</strong> si è formato un minimo
-          allo stesso livello del primo e il prezzo sta risalendo verso la
-          linea del collo.
+          <strong>Struttura completata:</strong> il secondo minimo si è
+          formato allo stesso livello del primo — spalla destra nel testa e
+          spalle, secondo minimo nel doppio minimo — e il prezzo risale
+          verso la linea del collo.
         </p>
         <p className="break-words">
           <strong>Collo rotto:</strong> il prezzo ha superato il livello di
@@ -284,6 +285,13 @@ export default function FormationsView({ onOpenTicker }: Props) {
           Molte figure in formazione non si completeranno: è il costo del
           vederle presto anziché a movimento avvenuto. Aprendo un titolo la
           figura viene disegnata sul grafico giornaliero.
+        </p>
+        <p className="break-words">
+          Perché una figura sia considerata valida servono: una discesa che
+          la precede, minimi da cui il prezzo è poi risalito in modo
+          apprezzabile, una linea del collo pressoché orizzontale fra i due
+          picchi intermedi, e due lati di durata confrontabile. Senza questi
+          vincoli qualunque oscillazione può somigliare a una figura.
         </p>
       </div>
     </div>
