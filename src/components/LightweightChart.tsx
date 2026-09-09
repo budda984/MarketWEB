@@ -60,6 +60,8 @@ export type ChartFormation = {
   neckline: number;
   necklineFrom: { time: number; price: number };
   necklineTo: { time: number; price: number };
+  upperLine?: { from: { time: number; price: number }; to: { time: number; price: number } };
+  lowerLine?: { from: { time: number; price: number }; to: { time: number; price: number } };
 };
 
 /** Gap di apertura da evidenziare sul grafico */
@@ -785,6 +787,33 @@ function drawFormation(
           : '#fbbf24'
         : '#94a3b8';
 
+  ctx.save();
+
+  // Figure a cuneo: due rette convergenti al posto della spezzata sui
+  // punti chiave
+  if (f.upperLine && f.lowerLine) {
+    for (const line of [f.upperLine, f.lowerLine]) {
+      const a = toCanvas(line.from);
+      const b = toCanvas(line.to);
+      if (!a || !b) continue;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    const top = toCanvas(f.upperLine.to);
+    if (top) {
+      ctx.fillStyle = color;
+      ctx.font = 'bold 10px system-ui, sans-serif';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(`rottura ${f.neckline.toFixed(2)}`, top.x - 70, top.y - 4);
+    }
+    ctx.restore();
+    return;
+  }
+
   const pts = f.points
     .map((p) => ({ ...p, c: toCanvas({ time: p.time, price: p.price }) }))
     .filter((p) => p.c != null) as Array<{
@@ -792,8 +821,6 @@ function drawFormation(
     price: number;
     c: { x: number; y: number };
   }>;
-
-  ctx.save();
 
   // Spezzata fra i punti chiave
   if (pts.length >= 2) {

@@ -18,7 +18,12 @@
 import type { OHLCV } from './yahoo';
 import { findPivots, type Pivot } from './patterns';
 
-export type FormationKind = 'IHS' | 'DOUBLE_BOTTOM' | 'HS' | 'DOUBLE_TOP';
+export type FormationKind =
+  | 'IHS'
+  | 'DOUBLE_BOTTOM'
+  | 'HS'
+  | 'DOUBLE_TOP'
+  | 'FALLING_WEDGE';
 export type FormationDirection = 'bullish' | 'bearish';
 export type FormationState = 'forming' | 'right_shoulder' | 'confirmed';
 
@@ -27,6 +32,7 @@ export const FORMATION_LABELS: Record<FormationKind, string> = {
   DOUBLE_BOTTOM: 'Doppio minimo',
   HS: 'Testa e spalle',
   DOUBLE_TOP: 'Doppio massimo',
+  FALLING_WEDGE: 'Cuneo discendente',
 };
 
 export const FORMATION_DIRECTION: Record<FormationKind, FormationDirection> = {
@@ -34,6 +40,7 @@ export const FORMATION_DIRECTION: Record<FormationKind, FormationDirection> = {
   DOUBLE_BOTTOM: 'bullish',
   HS: 'bearish',
   DOUBLE_TOP: 'bearish',
+  FALLING_WEDGE: 'bullish',
 };
 
 /**
@@ -43,6 +50,7 @@ export const FORMATION_DIRECTION: Record<FormationKind, FormationDirection> = {
 export function stateLabel(kind: FormationKind, state: FormationState): string {
   if (state === 'confirmed') return 'Linea del collo rotta';
   if (state === 'forming') return 'In formazione';
+  if (kind === 'FALLING_WEDGE') return 'Cuneo in compressione';
   if (kind === 'IHS' || kind === 'HS') return 'Spalla destra completata';
   return kind === 'DOUBLE_TOP'
     ? 'Secondo massimo formato'
@@ -83,6 +91,11 @@ export type Formation = {
   /** Sedute trascorse dall'inizio della figura */
   barsSpan: number;
   lastDate: string;
+  /** Rette convergenti, presenti solo nelle figure a cuneo */
+  upperLine?: { from: FormationPoint; to: FormationPoint };
+  lowerLine?: { from: FormationPoint; to: FormationPoint };
+  /** Quanto si e' ristretto il cuneo, in percentuale */
+  convergencePct?: number;
 };
 
 type Opts = {
@@ -268,6 +281,37 @@ function peakBetween(
     if (candles[i].h > best.price) best = { idx: i, price: candles[i].h };
   }
   return best.idx >= 0 ? best : null;
+}
+
+/**
+ * Retta di regressione sui punti dati, con R² per misurare quanto bene
+ * li descrive: senza questo controllo qualunque insieme di pivot
+ * produrrebbe due rette, anche in assenza di una struttura.
+ */
+function linreg(
+  xs: number[],
+  ys: number[]
+): { slope: number; intercept: number; r2: number; at: (x: number) => number } {
+  const n = xs.length;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (xs[i] - mx) * (ys[i] - my);
+    den += (xs[i] - mx) ** 2;
+  }
+  const slope = den === 0 ? 0 : num / den;
+  const intercept = my - slope * mx;
+  let ssRes = 0;
+  let ssTot = 0;
+  for (let i = 0; i < n; i++) {
+    const pred = slope * xs[i] + intercept;
+    ssRes += (ys[i] - pred) ** 2;
+    ssTot += (ys[i] - my) ** 2;
+  }
+  const r2 = ssTot === 0 ? 0 : 1 - ssRes / ssTot;
+  return { slope, intercept, r2, at: (x: number) => slope * x + intercept };
 }
 
 export function detectFormations(
@@ -700,6 +744,114 @@ export function detectFormations(
       lastDate: isoDate(candles[lastIdx].t),
     });
     break;
+  }
+
+  // ------------------------------------------------------------------
+  // CUNEO DISCENDENTE
+  //
+  // Due rette entrambe inclinate al ribasso che convergono: quella dei
+  // massimi scende piu' rapidamente di quella dei minimi. Il prezzo si
+  // comprime e la rottura avviene in genere verso l'alto.
+  //
+  // A differenza delle altre figure non c'e' una linea del collo
+  // orizzontale: il livello di conferma e' la retta superiore, che si
+  // abbassa a ogni seduta.
+  // ------------------------------------------------------------------
+  {
+    const WEDGE_MIN_BARS = 30;
+    const WEDGE_MAX_BARS = 130;
+    const MIN_TOUCHES = 3;
+    const MIN_R2 = 0.7;
+    /** Il cuneo deve restringersi almeno di questo: senza convergenza
+     *  sono due rette parallele, cioe' un canale. */
+    const MIN_CONVERGENCE = 0.35;
+
+    for (let lookback = WEDGE_MAX_BARS; lookback >= WEDGE_MIN_BARS; lookback -= 15) {
+      const from = lastIdx - lookback;
+      if (from < 5) continue;
+
+      const wHighs = highs.filter((p) => p.idx >= from);
+      const wLows = lows.filter((p) => p.idx >= from);
+      if (wHighs.length < MIN_TOUCHES || wLows.length < MIN_TOUCHES) continue;
+
+      const up = linreg(wHighs.map((p) => p.idx), wHighs.map((p) => p.price));
+      const lo = linreg(wLows.map((p) => p.idx), wLows.map((p) => p.price));
+      if (up.r2 < MIN_R2 || lo.r2 < MIN_R2) continue;
+
+      // Entrambe devono scendere: e' un cuneo discendente
+      if (up.slope >= 0 || lo.slope >= 0) continue;
+      // E i massimi devono scendere piu' in fretta dei minimi
+      if (up.slope >= lo.slope) continue;
+
+      const startIdx = Math.min(wHighs[0].idx, wLows[0].idx);
+      const widthStart = up.at(startIdx) - lo.at(startIdx);
+      const widthNow = up.at(lastIdx) - lo.at(lastIdx);
+      if (widthStart <= 0 || widthNow <= 0) continue;
+
+      const convergence = 1 - widthNow / widthStart;
+      if (convergence < MIN_CONVERGENCE) continue;
+
+      const upperNow = up.at(lastIdx);
+      const lowerNow = lo.at(lastIdx);
+
+      // Il prezzo deve stare dentro il cuneo, o averlo appena rotto al
+      // rialzo. Se e' sceso sotto la retta inferiore la figura e' fallita.
+      if (price < lowerNow * 0.97) continue;
+
+      let state: FormationState;
+      if (price > upperNow) {
+        // Conferma solo se la rottura e' recente: un cuneo rotto un mese
+        // fa non e' piu' un'occasione
+        let brokeAt: number | null = null;
+        for (let i = lastIdx; i >= Math.max(from, lastIdx - 8); i--) {
+          if (candles[i].c > up.at(i)) brokeAt = i;
+          else break;
+        }
+        if (brokeAt == null) continue;
+        state = 'confirmed';
+      } else if (convergence >= 0.5) {
+        state = 'right_shoulder'; // compressione avanzata
+      } else {
+        state = 'forming';
+      }
+
+      const height = widthStart;
+      out.push({
+        ticker,
+        kind: 'FALLING_WEDGE',
+        direction: 'bullish',
+        state,
+        points: [
+          {
+            time: candles[startIdx].t,
+            price: up.at(startIdx),
+            label: 'Inizio cuneo',
+          },
+          { time: candles[lastIdx].t, price: upperNow, label: 'Rottura' },
+        ],
+        neckline: upperNow,
+        necklineFrom: { time: candles[startIdx].t, price: up.at(startIdx) },
+        necklineTo: { time: candles[lastIdx].t, price: upperNow },
+        upperLine: {
+          from: { time: candles[startIdx].t, price: up.at(startIdx), label: '' },
+          to: { time: candles[lastIdx].t, price: upperNow, label: '' },
+        },
+        lowerLine: {
+          from: { time: candles[startIdx].t, price: lo.at(startIdx), label: '' },
+          to: { time: candles[lastIdx].t, price: lowerNow, label: '' },
+        },
+        convergencePct: convergence * 100,
+        price,
+        distanceToNecklinePct: ((upperNow - price) / price) * 100,
+        depthPct: (height / upperNow) * 100,
+        // Obiettivo classico: l'ampiezza iniziale del cuneo proiettata
+        // dal punto di rottura
+        target: upperNow + height,
+        barsSpan: lastIdx - startIdx,
+        lastDate: isoDate(candles[lastIdx].t),
+      });
+      break; // un solo cuneo per titolo
+    }
   }
 
   return out;

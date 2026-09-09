@@ -239,6 +239,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
                   <option value="DOUBLE_BOTTOM">Doppio minimo</option>
                   <option value="HS">Testa e spalle</option>
                   <option value="DOUBLE_TOP">Doppio massimo</option>
+                  <option value="FALLING_WEDGE">Cuneo discendente</option>
                 </select>
               </label>
               <label className="flex items-center gap-1.5 text-xs">
@@ -380,6 +381,13 @@ export default function FormationsView({ onOpenTicker }: Props) {
           Molte figure in formazione non si completeranno: è il costo del
           vederle presto anziché a movimento avvenuto. Aprendo un titolo la
           figura viene disegnata sul grafico giornaliero.
+        </p>
+        <p className="break-words">
+          Il <strong>cuneo discendente</strong> ha una geometria diversa: due
+          rette entrambe inclinate al ribasso che convergono, con i massimi
+          che scendono più rapidamente dei minimi. Non c&apos;è una linea del
+          collo orizzontale — il livello di conferma è la retta superiore,
+          che si abbassa a ogni seduta.
         </p>
         <p className="break-words">
           Le figure ribassiste — testa e spalle e doppio massimo — seguono
