@@ -798,22 +798,35 @@ export function detectFormations(
       // rialzo. Se e' sceso sotto la retta inferiore la figura e' fallita.
       if (price < lowerNow * 0.97) continue;
 
+      // Punto di rottura: l'ultima seduta che stava ancora dentro il
+      // cuneo, piu' uno. Serve anche per fermare li' il disegno delle
+      // rette, che altrimenti proseguirebbero oltre la figura.
+      let breakoutIdx: number | null = null;
+      for (let i = lastIdx; i > from; i--) {
+        if (candles[i].c <= up.at(i)) {
+          breakoutIdx = i + 1 <= lastIdx ? i + 1 : null;
+          break;
+        }
+      }
+
       let state: FormationState;
-      if (price > upperNow) {
+      if (price > upperNow && breakoutIdx != null) {
         // Conferma solo se la rottura e' recente: un cuneo rotto un mese
         // fa non e' piu' un'occasione
-        let brokeAt: number | null = null;
-        for (let i = lastIdx; i >= Math.max(from, lastIdx - 8); i--) {
-          if (candles[i].c > up.at(i)) brokeAt = i;
-          else break;
-        }
-        if (brokeAt == null) continue;
+        if (lastIdx - breakoutIdx > 8) continue;
         state = 'confirmed';
+      } else if (price > upperNow) {
+        continue; // sopra la retta da sempre: non e' una rottura
       } else if (convergence >= 0.5) {
         state = 'right_shoulder'; // compressione avanzata
       } else {
         state = 'forming';
       }
+
+      // Le rette si fermano alla rottura, non proseguono fino a oggi
+      const lineEndIdx = state === 'confirmed' && breakoutIdx != null
+        ? breakoutIdx
+        : lastIdx;
 
       const height = widthStart;
       out.push({
@@ -834,11 +847,19 @@ export function detectFormations(
         necklineTo: { time: candles[lastIdx].t, price: upperNow },
         upperLine: {
           from: { time: candles[startIdx].t, price: up.at(startIdx), label: '' },
-          to: { time: candles[lastIdx].t, price: upperNow, label: '' },
+          to: {
+            time: candles[lineEndIdx].t,
+            price: up.at(lineEndIdx),
+            label: '',
+          },
         },
         lowerLine: {
           from: { time: candles[startIdx].t, price: lo.at(startIdx), label: '' },
-          to: { time: candles[lastIdx].t, price: lowerNow, label: '' },
+          to: {
+            time: candles[lineEndIdx].t,
+            price: lo.at(lineEndIdx),
+            label: '',
+          },
         },
         convergencePct: convergence * 100,
         price,

@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { yahooDownloadMany } from '@/lib/yahoo';
 import { MARKETS, getMarketForTicker } from '@/lib/tickers';
-import { detectFormations } from '@/lib/formations';
+import { detectFormations, FORMATION_LABELS, type Formation } from '@/lib/formations';
+import { sendTelegramMessage } from '@/lib/telegram';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,10 +35,24 @@ export async function GET(req: Request) {
       ])
     );
 
+    // Stati precedenti: servono a riconoscere i cambiamenti. Senza,
+    // ogni sera si rinotificherebbe la stessa rottura.
+    const { data: previous } = await admin
+      .from('formations')
+      .select('ticker, kind, state');
+    const prevState = new Map<string, string>();
+    for (const p of previous ?? []) {
+      prevState.set(`${p.ticker}|${p.kind}`, p.state);
+    }
+
     let found = 0;
     let truncated = false;
     const now = new Date().toISOString();
     const CHUNK = 40;
+
+    // Novita' da segnalare
+    const breakouts: Formation[] = [];
+    const newlyForming: Formation[] = [];
 
     for (let i = 0; i < universe.length; i += CHUNK) {
       if (Date.now() - t0 > 42000) {
@@ -52,6 +67,17 @@ export async function GET(req: Request) {
         const candles = data[ticker];
         if (!candles || candles.length < 80) continue;
         for (const f of detectFormations(ticker, candles)) {
+          const key = `${f.ticker}|${f.kind}`;
+          const before = prevState.get(key);
+
+          // Rottura: e' il momento operativo, quindi va segnalata sia se
+          // la figura era gia' nota sia se compare direttamente rotta
+          if (f.state === 'confirmed' && before !== 'confirmed') {
+            breakouts.push(f);
+          } else if (!before && f.state !== 'confirmed') {
+            newlyForming.push(f);
+          }
+
           rows.push({
             ticker: f.ticker,
             kind: f.kind,
@@ -89,10 +115,72 @@ export async function GET(req: Request) {
     const cutoff = new Date(Date.now() - 21 * 86400000).toISOString();
     await admin.from('formations').delete().lt('last_seen', cutoff);
 
+    // ------------------------------------------------------------------
+    // Notifica
+    // ------------------------------------------------------------------
+    let telegramSent = 0;
+    if (breakouts.length > 0 || newlyForming.length > 0) {
+      const parts: string[] = [];
+
+      if (breakouts.length > 0) {
+        parts.push('🚨 <b>Rottura confermata</b>');
+        parts.push(
+          ...breakouts
+            .sort((a, b) => b.depthPct - a.depthPct)
+            .slice(0, 12)
+            .map((f) => {
+              const label = FORMATION_LABELS[f.kind];
+              const dir = f.direction === 'bearish' ? '↓' : '↑';
+              return (
+                `${dir} <b>${f.ticker}</b> ${label}\n` +
+                `   ${f.price.toFixed(2)} · livello ${f.neckline.toFixed(2)} · obiettivo ${f.target.toFixed(2)}`
+              );
+            })
+        );
+        if (breakouts.length > 12) {
+          parts.push(`… e altre ${breakouts.length - 12}`);
+        }
+      }
+
+      if (newlyForming.length > 0) {
+        // In formazione: elenco compatto, non e' ancora il momento di agire
+        const byKind = new Map<string, string[]>();
+        for (const f of newlyForming) {
+          const label = FORMATION_LABELS[f.kind];
+          const list = byKind.get(label) ?? [];
+          list.push(f.ticker);
+          byKind.set(label, list);
+        }
+        parts.push('', '📐 <b>Nuove figure in formazione</b>');
+        for (const [label, tickers] of byKind) {
+          parts.push(`${label}: ${tickers.slice(0, 12).join(', ')}`);
+        }
+      }
+
+      const text = parts.join('\n');
+      const { data: users } = await admin
+        .from('user_settings')
+        .select('telegram_bot_token, telegram_chat_id')
+        .not('telegram_bot_token', 'is', null)
+        .not('telegram_chat_id', 'is', null);
+
+      for (const u of users ?? []) {
+        const ok = await sendTelegramMessage({
+          token: u.telegram_bot_token!,
+          chatId: u.telegram_chat_id!,
+          text,
+        });
+        if (ok) telegramSent++;
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       universeSize: universe.length,
       found,
+      breakouts: breakouts.length,
+      newlyForming: newlyForming.length,
+      telegramSent,
       truncated,
       elapsedMs: Date.now() - t0,
     });
