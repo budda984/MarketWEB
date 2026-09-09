@@ -105,11 +105,11 @@ const DEFAULTS: Opts = {
   leftBars: 6,
   rightBars: 6,
   levelTolerance: 0.02,
-  headDepthMin: 0.05,
-  minDepthPct: 6,
+  headDepthMin: 0.06,
+  minDepthPct: 7,
   durationMin: 25,
   durationMax: 120,
-  returnTolerance: 0.04,
+  returnTolerance: 0.03,
 };
 
 /** Massima inclinazione ammessa per la linea del collo. */
@@ -120,6 +120,12 @@ const TIME_ASYMMETRY_MAX = 0.6;
 const PRIOR_DECLINE_MIN = 0.06;
 /** Risalita minima da un minimo perche' sia strutturale e non un ritracciamento. */
 const PIVOT_PROMINENCE_MIN = 0.04;
+/** Sedute minime fra la testa e oggi perche' una spalla destra sia plausibile. */
+const MIN_BARS_SINCE_HEAD = 12;
+/** Sedute minime fra i due estremi di un doppio massimo o minimo. */
+const MIN_BARS_BETWEEN_EXTREMES = 12;
+/** Quanto il prezzo deve essersi gia' allontanato dall'abbozzo di spalla. */
+const ROLLOVER_MIN = 0.015;
 
 function isoDate(t: number): string {
   return new Date(t * 1000).toISOString().slice(0, 10);
@@ -355,21 +361,30 @@ export function detectFormations(
       }
     }
 
-    const distFromShoulder = Math.abs(price - ls.price) / ls.price;
-
     let state: FormationState;
     if (price > neckline) {
       state = 'confirmed';
     } else if (rs) {
       state = 'right_shoulder';
-    } else if (
-      distFromShoulder <= o.returnTolerance &&
-      price > head.price &&
-      lastIdx > peak2.idx
-    ) {
-      state = 'forming';
     } else {
-      continue;
+      // Speculare: il prezzo deve essere ridisceso al livello della
+      // spalla sinistra dopo il picco intermedio e aver gia' ripreso a
+      // salire. Altrimenti e' un ritracciamento qualsiasi.
+      const trough2 = troughBetween(candles, peak2.idx, lastIdx);
+      if (!trough2) continue;
+      const troughDiff = Math.abs(trough2.price - ls.price) / ls.price;
+      const bouncing = price > trough2.price * (1 + ROLLOVER_MIN);
+      const enoughTime = lastIdx - head.idx >= MIN_BARS_SINCE_HEAD;
+      if (
+        troughDiff <= o.levelTolerance &&
+        bouncing &&
+        enoughTime &&
+        trough2.price > head.price
+      ) {
+        state = 'forming';
+      } else {
+        continue;
+      }
     }
 
     const points: FormationPoint[] = [
@@ -431,6 +446,8 @@ export function detectFormations(
     // segnalare una figura che nel frattempo si e' rotta.
     const trough = troughBetween(candles, peak.idx, lastIdx);
     if (!trough) continue;
+    // Due minimi troppo ravvicinati sono un'oscillazione, non una figura
+    if (trough.idx - l1.idx < MIN_BARS_BETWEEN_EXTREMES) continue;
 
     // Il minimo reale deve stare allo stesso livello del primo: e' la
     // condizione che definisce un doppio minimo. Se e' sceso sotto oltre
@@ -555,21 +572,32 @@ export function detectFormations(
       }
     }
 
-    const distFromShoulder = Math.abs(price - ls.price) / ls.price;
-
     let state: FormationState;
     if (price < neckline) {
       state = 'confirmed';
     } else if (rs) {
       state = 'right_shoulder';
-    } else if (
-      distFromShoulder <= o.returnTolerance &&
-      price < head.price &&
-      lastIdx > valley2.idx
-    ) {
-      state = 'forming';
     } else {
-      continue;
+      // Perche' si possa parlare di spalla destra in formazione non basta
+      // che il prezzo sia dalle parti della spalla sinistra: deve essere
+      // risalito fin li' dopo il minimo intermedio E aver gia' iniziato a
+      // girare. Senza questo, ogni ritracciamento dentro un rialzo
+      // veniva scambiato per una figura.
+      const crest = peakOnly(candles, valley2.idx, lastIdx);
+      if (!crest) continue;
+      const crestDiff = Math.abs(crest.price - ls.price) / ls.price;
+      const rolledOver = price < crest.price * (1 - ROLLOVER_MIN);
+      const enoughTime = lastIdx - head.idx >= MIN_BARS_SINCE_HEAD;
+      if (
+        crestDiff <= o.levelTolerance &&
+        rolledOver &&
+        enoughTime &&
+        crest.price < head.price
+      ) {
+        state = 'forming';
+      } else {
+        continue;
+      }
     }
 
     const points: FormationPoint[] = [
@@ -626,6 +654,7 @@ export function detectFormations(
     // Il secondo massimo e' il punto piu' alto dopo il minimo intermedio
     const crest = peakOnly(candles, valley.idx, lastIdx);
     if (!crest) continue;
+    if (crest.idx - h1.idx < MIN_BARS_BETWEEN_EXTREMES) continue;
 
     const levelDiff = Math.abs(crest.price - h1.price) / h1.price;
     if (levelDiff > o.levelTolerance) continue;
