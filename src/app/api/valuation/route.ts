@@ -51,9 +51,17 @@ export async function GET(req: Request) {
     .from('valuations')
     .select('*', { count: 'exact', head: true });
 
+  const { data: lastRow } = await supabase
+    .from('valuations')
+    .select('updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   return NextResponse.json({
     opportunities,
     withCaution,
     analyzed: total ?? 0,
+    lastScan: lastRow?.updated_at ?? null,
   });
 }

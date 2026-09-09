@@ -60,6 +60,14 @@ export async function GET(req: Request) {
     .select('*', { count: 'exact', head: true })
     .eq('filled', false);
 
+  // Momento dell'ultima scansione: senza, un archivio vecchio sembra fresco
+  const { data: lastRow } = await supabase
+    .from('price_gaps')
+    .select('updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   // ------------------------------------------------------------------
   // Confronto dei tassi di chiusura per fascia di volume.
   //
@@ -117,5 +125,6 @@ export async function GET(req: Request) {
     totalOpen: count ?? 0,
     volumeBuckets: buckets,
     volumeAnalysisSize: (allGaps ?? []).length,
+    lastScan: lastRow?.updated_at ?? null,
   });
 }

@@ -11,6 +11,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
 } from 'lucide-react';
+import LastScan from './LastScan';
 
 type Trade = {
   id: string;
@@ -58,6 +59,7 @@ export default function InsiderView({ onOpenTicker }: Props) {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [totalRows, setTotalRows] = useState(0);
+  const [lastScan, setLastScan] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -87,6 +89,7 @@ export default function InsiderView({ onOpenTicker }: Props) {
       setTrades(d.trades ?? []);
       setClusters(d.clusters ?? []);
       setTotalRows(d.totalRows ?? 0);
+      setLastScan(d.lastScan ?? null);
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -195,6 +198,8 @@ export default function InsiderView({ onOpenTicker }: Props) {
             </select>
           </label>
         </div>
+
+        <LastScan at={lastScan} />
 
         {syncMsg && (
           <div className="text-xs text-brand-green">{syncMsg}</div>

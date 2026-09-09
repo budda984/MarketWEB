@@ -93,5 +93,17 @@ export async function GET(req: Request) {
     .from('insider_trades')
     .select('*', { count: 'exact', head: true });
 
-  return NextResponse.json({ trades, clusters, totalRows: totalRows ?? 0 });
+  const { data: lastRow } = await supabase
+    .from('insider_trades')
+    .select('created_at')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return NextResponse.json({
+    trades,
+    clusters,
+    totalRows: totalRows ?? 0,
+    lastScan: lastRow?.created_at ?? null,
+  });
 }

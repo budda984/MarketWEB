@@ -9,6 +9,7 @@ import {
   Info,
   AlertTriangle,
 } from 'lucide-react';
+import LastScan from './LastScan';
 
 type Row = {
   ticker: string;
@@ -30,6 +31,7 @@ export default function ValuationsView({ onOpenTicker }: Props) {
   const [opportunities, setOpportunities] = useState<Row[]>([]);
   const [withCaution, setWithCaution] = useState<Row[]>([]);
   const [analyzed, setAnalyzed] = useState(0);
+  const [lastScan, setLastScan] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [filling, setFilling] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -54,6 +56,7 @@ export default function ValuationsView({ onOpenTicker }: Props) {
       setOpportunities(d.opportunities ?? []);
       setWithCaution(d.withCaution ?? []);
       setAnalyzed(d.analyzed ?? 0);
+      setLastScan(d.lastScan ?? null);
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -117,6 +120,8 @@ export default function ValuationsView({ onOpenTicker }: Props) {
             {analyzed} titoli in archivio
           </span>
         </div>
+
+        <LastScan at={lastScan} staleAfterHours={480} />
 
         <button
           onClick={fill}

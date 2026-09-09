@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Info,
 } from 'lucide-react';
+import LastScan from './LastScan';
 
 type Flip = {
   id: string;
@@ -143,6 +144,8 @@ export default function WeeklyTrendView({ onOpenTicker }: Props) {
             )}
           </button>
         </div>
+
+        <LastScan at={summary?.lastUpdate} staleAfterHours={192} />
 
         {summary && (
           <div className="grid grid-cols-2 gap-3">

@@ -10,6 +10,7 @@ import {
   ArrowUp,
   ArrowDown,
 } from 'lucide-react';
+import LastScan from './LastScan';
 
 type Gap = {
   id: string;
@@ -54,6 +55,7 @@ export default function GapsView({ onOpenTicker }: Props) {
   const [gaps, setGaps] = useState<Gap[]>([]);
   const [stats, setStats] = useState<Record<string, Stat>>({});
   const [totalOpen, setTotalOpen] = useState(0);
+  const [lastScan, setLastScan] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -85,6 +87,7 @@ export default function GapsView({ onOpenTicker }: Props) {
       }
       setGaps(d.gaps ?? []);
       setTotalOpen(d.totalOpen ?? 0);
+      setLastScan(d.lastScan ?? null);
       setBucketsData(d.volumeBuckets ?? null);
       setAnalysisSize(d.volumeAnalysisSize ?? 0);
       const map: Record<string, Stat> = {};
@@ -173,6 +176,8 @@ export default function GapsView({ onOpenTicker }: Props) {
             {totalOpen} aperti · S&amp;P 500 e NASDAQ
           </span>
         </div>
+
+        <LastScan at={lastScan} />
 
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1 bg-brand-panel rounded p-0.5">
