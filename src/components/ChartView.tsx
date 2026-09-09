@@ -20,7 +20,7 @@ import { MARKETS, type MarketKey, ALL_TICKERS, getMarketForTicker } from '@/lib/
 import { localSearch } from '@/lib/ticker-names';
 import AlertsPanel from './AlertsPanel';
 import AddToWatchlistButton from './AddToWatchlistButton';
-import LightweightChart from './LightweightChart';
+import LightweightChart, { type ChartFormation } from './LightweightChart';
 import ValuationCard from './ValuationCard';
 
 type Props = {
@@ -57,6 +57,27 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [browseMarket, setBrowseMarket] = useState<MarketKey | 'none'>('none');
   const [timeframe, setTimeframe] = useState<Timeframe>('1d');
+  const [formation, setFormation] = useState<ChartFormation | null>(null);
+
+  // Figure riconosciute: solo sul giornaliero, dove la rilevazione ha
+  // senso. Sugli altri intervalli non si disegna nulla.
+  useEffect(() => {
+    let cancel = false;
+    setFormation(null);
+    if (timeframe !== '1d') return;
+    fetch(`/api/formations/${encodeURIComponent(ticker)}`)
+      .then((r) => r.text())
+      .then((text) => {
+        if (cancel || !text) return;
+        const d = JSON.parse(text);
+        const list = d.formations ?? [];
+        if (list.length > 0) setFormation(list[0]);
+      })
+      .catch(() => {});
+    return () => {
+      cancel = true;
+    };
+  }, [ticker, timeframe]);
 
   useEffect(() => {
     let cancel = false;
@@ -308,6 +329,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
               return hma(closes, 50)[i];
             })}
             theme="dark"
+            formation={formation}
           />
 
           <ValuationCard ticker={ticker} />

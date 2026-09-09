@@ -51,11 +51,22 @@ export type Drawing = TrendlineDrawing | RectDrawing | PositionDrawing;
 
 type DrawingTool = null | 'TRENDLINE' | 'RECT' | 'LONG' | 'SHORT';
 
+/** Figura riconosciuta, disegnata sopra il grafico */
+export type ChartFormation = {
+  kind: string;
+  state: string;
+  points: Array<{ time: number; price: number; label: string }>;
+  neckline: number;
+  necklineFrom: { time: number; price: number };
+  necklineTo: { time: number; price: number };
+};
+
 type Props = {
   ticker: string;
   candles: OHLCV[];
   hma?: (number | null)[];
   theme?: 'dark' | 'light';
+  formation?: ChartFormation | null;
 };
 
 export default function LightweightChart({
@@ -63,6 +74,7 @@ export default function LightweightChart({
   candles,
   hma,
   theme = 'dark',
+  formation = null,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -274,6 +286,11 @@ export default function LightweightChart({
       drawShape(ctx, d, toCanvas);
     }
 
+    // Figura riconosciuta: punti chiave uniti e linea del collo
+    if (formation) {
+      drawFormation(ctx, formation, toCanvas);
+    }
+
     // Disegno il draft in corso (linea preview mentre stai scegliendo punti)
     if (tool && draftPoints.length > 0) {
       const previewColor = '#60a5fa';
@@ -291,7 +308,7 @@ export default function LightweightChart({
       }
       ctx.restore();
     }
-  }, [drawings, tool, draftPoints]);
+  }, [drawings, tool, draftPoints, formation]);
 
   // Redraw quando drawings o draft cambiano + sync ref per le subscribe
   useEffect(() => {
@@ -661,6 +678,74 @@ function drawShape(ctx: CanvasRenderingContext2D, d: Drawing, toCanvas: CanvasMa
     );
     ctx.restore();
   }
+}
+
+/**
+ * Disegna la figura: i punti chiave uniti da una spezzata e la linea del
+ * collo tratteggiata. Il colore segue lo stato, cosi' si distingue a
+ * colpo d'occhio una figura solo abbozzata da una gia' confermata.
+ */
+function drawFormation(
+  ctx: CanvasRenderingContext2D,
+  f: ChartFormation,
+  toCanvas: CanvasMapper
+) {
+  const color =
+    f.state === 'confirmed'
+      ? '#16a34a'
+      : f.state === 'right_shoulder'
+        ? '#fbbf24'
+        : '#94a3b8';
+
+  const pts = f.points
+    .map((p) => ({ ...p, c: toCanvas({ time: p.time, price: p.price }) }))
+    .filter((p) => p.c != null) as Array<{
+    label: string;
+    price: number;
+    c: { x: number; y: number };
+  }>;
+
+  ctx.save();
+
+  // Spezzata fra i punti chiave
+  if (pts.length >= 2) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].c.x, pts[0].c.y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].c.x, pts[i].c.y);
+    ctx.stroke();
+  }
+
+  // Punti con etichetta
+  ctx.font = 'bold 10px system-ui, sans-serif';
+  ctx.textBaseline = 'top';
+  for (const p of pts) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(p.c.x, p.c.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillText(p.label, p.c.x - 12, p.c.y + 8);
+  }
+
+  // Linea del collo
+  const a = toCanvas({ time: f.necklineFrom.time, price: f.necklineFrom.price });
+  const b = toCanvas({ time: f.necklineTo.time, price: f.necklineTo.price });
+  if (a && b) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = color;
+    ctx.fillText(`collo ${f.neckline.toFixed(2)}`, a.x + 4, a.y - 4);
+  }
+
+  ctx.restore();
 }
 
 function hexToRgba(hex: string, alpha: number): string {

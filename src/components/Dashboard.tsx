@@ -22,7 +22,7 @@ import {
   Crosshair,
   Rows3,
   Scale,
-  FlaskConical,
+  Shapes,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
@@ -42,7 +42,7 @@ import SocialView from './SocialView';
 import OpportunitiesView from './OpportunitiesView';
 import GapsView from './GapsView';
 import ValuationsView from './ValuationsView';
-import PatternTestView from './PatternTestView';
+import FormationsView from './FormationsView';
 
 type View =
   | 'chart'
@@ -59,7 +59,7 @@ type View =
   | 'radar'
   | 'gaps'
   | 'valuations'
-  | 'patterntest';
+  | 'formations';
 
 type Props = {
   userEmail: string;
@@ -288,10 +288,10 @@ export default function Dashboard({
             label="Backtest"
           />
           <NavButton
-            active={view === 'patterntest'}
-            onClick={() => setView('patterntest')}
-            icon={<FlaskConical className="w-4 h-4" />}
-            label="Verifica figure"
+            active={view === 'formations'}
+            onClick={() => setView('formations')}
+            icon={<Shapes className="w-4 h-4" />}
+            label="Figure"
           />
           <NavButton
             active={view === 'settings'}
@@ -495,10 +495,10 @@ export default function Dashboard({
                   Indici
                 </span>
               )}
-              {view === 'patterntest' && (
+              {view === 'formations' && (
                 <span className="font-semibold flex items-center gap-1.5">
-                  <FlaskConical className="w-4 h-4 flex-shrink-0" />
-                  Verifica figure
+                  <Shapes className="w-4 h-4 flex-shrink-0" />
+                  Figure
                 </span>
               )}
               {view === 'settings' && (
@@ -556,7 +556,7 @@ export default function Dashboard({
           {view === 'radar' && <OpportunitiesView onOpenTicker={onOpenTicker} />}
           {view === 'gaps' && <GapsView onOpenTicker={onOpenTicker} />}
           {view === 'valuations' && <ValuationsView onOpenTicker={onOpenTicker} />}
-          {view === 'patterntest' && <PatternTestView />}
+          {view === 'formations' && <FormationsView onOpenTicker={onOpenTicker} />}
           {view === 'social' && <SocialView onOpenTicker={onOpenTicker} />}
           {view === 'movers' && <MoversView onOpenTicker={onOpenTicker} />}
           {view === 'indices' && <IndicesView onOpenTicker={onOpenTicker} />}
