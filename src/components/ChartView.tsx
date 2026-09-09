@@ -20,7 +20,10 @@ import { MARKETS, type MarketKey, ALL_TICKERS, getMarketForTicker } from '@/lib/
 import { localSearch } from '@/lib/ticker-names';
 import AlertsPanel from './AlertsPanel';
 import AddToWatchlistButton from './AddToWatchlistButton';
-import LightweightChart, { type ChartFormation } from './LightweightChart';
+import LightweightChart, {
+  type ChartFormation,
+  type ChartGap,
+} from './LightweightChart';
 import ValuationCard from './ValuationCard';
 
 type Props = {
@@ -58,9 +61,27 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
   const [browseMarket, setBrowseMarket] = useState<MarketKey | 'none'>('none');
   const [timeframe, setTimeframe] = useState<Timeframe>('1d');
   const [formation, setFormation] = useState<ChartFormation | null>(null);
+  const [gaps, setGaps] = useState<ChartGap[]>([]);
 
   // Figure riconosciute: solo sul giornaliero, dove la rilevazione ha
   // senso. Sugli altri intervalli non si disegna nulla.
+  useEffect(() => {
+    let cancel = false;
+    setGaps([]);
+    if (timeframe !== '1d') return;
+    fetch(`/api/gaps/${encodeURIComponent(ticker)}`)
+      .then((r) => r.text())
+      .then((text) => {
+        if (cancel || !text) return;
+        const d = JSON.parse(text);
+        setGaps(d.gaps ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      cancel = true;
+    };
+  }, [ticker, timeframe]);
+
   useEffect(() => {
     let cancel = false;
     setFormation(null);
@@ -330,6 +351,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
             })}
             theme="dark"
             formation={formation}
+            gaps={gaps}
           />
 
           <ValuationCard ticker={ticker} />

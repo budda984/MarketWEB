@@ -61,12 +61,25 @@ export type ChartFormation = {
   necklineTo: { time: number; price: number };
 };
 
+/** Gap di apertura da evidenziare sul grafico */
+export type ChartGap = {
+  time: number;
+  endTime: number;
+  direction: 'up' | 'down';
+  gapPct: number;
+  openPrice: number;
+  targetPrice: number;
+  edgePrice: number;
+  filled: boolean;
+};
+
 type Props = {
   ticker: string;
   candles: OHLCV[];
   hma?: (number | null)[];
   theme?: 'dark' | 'light';
   formation?: ChartFormation | null;
+  gaps?: ChartGap[];
 };
 
 export default function LightweightChart({
@@ -75,6 +88,7 @@ export default function LightweightChart({
   hma,
   theme = 'dark',
   formation = null,
+  gaps = [],
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -281,6 +295,12 @@ export default function LightweightChart({
       return { x: x as number, y: y as number };
     }
 
+    // I gap vanno per primi: restano sullo sfondo, sotto le figure e i
+    // disegni dell'utente
+    for (const g of gaps) {
+      drawGap(ctx, g, toCanvas);
+    }
+
     // Disegno tutti i drawings completi
     for (const d of drawings) {
       drawShape(ctx, d, toCanvas);
@@ -308,7 +328,7 @@ export default function LightweightChart({
       }
       ctx.restore();
     }
-  }, [drawings, tool, draftPoints, formation]);
+  }, [drawings, tool, draftPoints, formation, gaps]);
 
   // Redraw quando drawings o draft cambiano + sync ref per le subscribe
   useEffect(() => {
@@ -678,6 +698,66 @@ function drawShape(ctx: CanvasRenderingContext2D, d: Drawing, toCanvas: CanvasMa
     );
     ctx.restore();
   }
+}
+
+/**
+ * Evidenzia un gap: la fascia vuota fra la chiusura precedente e
+ * l'apertura, e la linea del livello da raggiungere per chiuderlo.
+ *
+ * La linea parte dalla seduta del gap e si interrompe quando il gap
+ * viene chiuso; se e' ancora aperto prosegue fino al bordo destro, cosi'
+ * si vede a colpo d'occhio quali sono ancora in gioco.
+ */
+function drawGap(
+  ctx: CanvasRenderingContext2D,
+  g: ChartGap,
+  toCanvas: CanvasMapper
+) {
+  const up = g.direction === 'up';
+  const color = up ? '#16a34a' : '#dc2626';
+
+  const start = toCanvas({ time: g.time, price: g.targetPrice });
+  const end = toCanvas({ time: g.endTime, price: g.targetPrice });
+  const edge = toCanvas({ time: g.time, price: g.edgePrice });
+  const open = toCanvas({ time: g.time, price: g.openPrice });
+  if (!start || !end) return;
+
+  ctx.save();
+
+  // Fascia del vuoto: dal bordo della seduta precedente all'apertura
+  if (edge && open) {
+    const top = Math.min(edge.y, open.y);
+    const h = Math.abs(edge.y - open.y);
+    if (h >= 1) {
+      ctx.fillStyle = hexToRgba(color, g.filled ? 0.06 : 0.14);
+      ctx.fillRect(start.x, top, Math.max(2, end.x - start.x), h);
+    }
+  }
+
+  // Livello di chiusura del gap
+  ctx.strokeStyle = hexToRgba(color, g.filled ? 0.35 : 0.9);
+  ctx.lineWidth = g.filled ? 1 : 1.5;
+  ctx.setLineDash(g.filled ? [2, 3] : [5, 3]);
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Solo i gap ancora aperti meritano un'etichetta: gli altri
+  // affollerebbero il grafico senza aggiungere nulla
+  if (!g.filled) {
+    ctx.fillStyle = color;
+    ctx.font = 'bold 9px system-ui, sans-serif';
+    ctx.textBaseline = up ? 'top' : 'bottom';
+    ctx.fillText(
+      `gap ${g.gapPct >= 0 ? '+' : ''}${g.gapPct.toFixed(1)}%`,
+      start.x + 3,
+      start.y + (up ? 3 : -3)
+    );
+  }
+
+  ctx.restore();
 }
 
 /**
