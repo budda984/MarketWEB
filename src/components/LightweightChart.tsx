@@ -54,6 +54,7 @@ type DrawingTool = null | 'TRENDLINE' | 'RECT' | 'LONG' | 'SHORT';
 /** Figura riconosciuta, disegnata sopra il grafico */
 export type ChartFormation = {
   kind: string;
+  direction?: 'bullish' | 'bearish';
   state: string;
   points: Array<{ time: number; price: number; label: string }>;
   neckline: number;
@@ -770,11 +771,18 @@ function drawFormation(
   f: ChartFormation,
   toCanvas: CanvasMapper
 ) {
+  // La tinta segue la direzione, l'intensita' lo stato: una figura
+  // ribassista confermata non puo' essere verde
+  const bearish = f.direction === 'bearish';
   const color =
     f.state === 'confirmed'
-      ? '#16a34a'
+      ? bearish
+        ? '#dc2626'
+        : '#16a34a'
       : f.state === 'right_shoulder'
-        ? '#fbbf24'
+        ? bearish
+          ? '#fb923c'
+          : '#fbbf24'
         : '#94a3b8';
 
   const pts = f.points

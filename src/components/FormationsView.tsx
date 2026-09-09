@@ -11,6 +11,7 @@ import {
 import LastScan from './LastScan';
 import {
   FORMATION_LABELS,
+  FORMATION_DIRECTION,
   stateLabel,
   type FormationKind,
   type FormationState,
@@ -19,6 +20,7 @@ import {
 type Formation = {
   ticker: string;
   kind: FormationKind;
+  direction?: 'bullish' | 'bearish';
   state: FormationState;
   neckline: number;
   price: number;
@@ -46,6 +48,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
   const [progress, setProgress] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [kindFilter, setKindFilter] = useState<'all' | FormationKind>('all');
+  const [dirFilter, setDirFilter] = useState<'all' | 'bullish' | 'bearish'>('all');
   const [stateFilter, setStateFilter] = useState<'all' | FormationState>('all');
   const [lastScan, setLastScan] = useState<string | null>(null);
 
@@ -134,6 +137,11 @@ export default function FormationsView({ onOpenTicker }: Props) {
   const visible = items
     .filter((f) => (kindFilter === 'all' ? true : f.kind === kindFilter))
     .filter((f) => (stateFilter === 'all' ? true : f.state === stateFilter))
+    .filter((f) =>
+      dirFilter === 'all'
+        ? true
+        : (f.direction ?? FORMATION_DIRECTION[f.kind]) === dirFilter
+    )
     .sort((a, b) => {
       // Prima le piu' avanzate, poi le piu' vicine alla conferma
       const order: Record<FormationState, number> = {
@@ -229,6 +237,24 @@ export default function FormationsView({ onOpenTicker }: Props) {
                   <option value="all">Tutte</option>
                   <option value="IHS">Testa e spalle rovesciato</option>
                   <option value="DOUBLE_BOTTOM">Doppio minimo</option>
+                  <option value="HS">Testa e spalle</option>
+                  <option value="DOUBLE_TOP">Doppio massimo</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-1.5 text-xs">
+                <span className="text-brand-muted">Direzione:</span>
+                <select
+                  value={dirFilter}
+                  onChange={(e) =>
+                    setDirFilter(
+                      e.target.value as 'all' | 'bullish' | 'bearish'
+                    )
+                  }
+                  className="input text-xs py-1"
+                >
+                  <option value="all">Entrambe</option>
+                  <option value="bullish">Rialziste</option>
+                  <option value="bearish">Ribassiste</option>
                 </select>
               </label>
               <label className="flex items-center gap-1.5 text-xs">
@@ -278,6 +304,19 @@ export default function FormationsView({ onOpenTicker }: Props) {
                     </span>
                     <span className="text-xs text-brand-muted">
                       {FORMATION_LABELS[f.kind]}
+                    </span>
+                    <span
+                      className={`text-xs font-semibold ${
+                        (f.direction ?? FORMATION_DIRECTION[f.kind]) ===
+                        'bearish'
+                          ? 'text-brand-down'
+                          : 'text-brand-up'
+                      }`}
+                    >
+                      {(f.direction ?? FORMATION_DIRECTION[f.kind]) ===
+                      'bearish'
+                        ? '↓'
+                        : '↑'}
                     </span>
                   </div>
                   <div className="text-xs text-brand-muted font-mono mt-0.5 break-words">
@@ -343,7 +382,13 @@ export default function FormationsView({ onOpenTicker }: Props) {
           figura viene disegnata sul grafico giornaliero.
         </p>
         <p className="break-words">
-          Perché una figura sia considerata valida servono: una discesa che
+          Le figure ribassiste — testa e spalle e doppio massimo — seguono
+          la logica speculare: richiedono una salita che le precede e si
+          confermano rompendo la linea del collo verso il basso. Il colore
+          sul grafico distingue la direzione.
+        </p>
+        <p className="break-words">
+          Perché una figura sia considerata valida servono: un movimento che
           la precede, minimi da cui il prezzo è poi risalito in modo
           apprezzabile, una linea del collo pressoché orizzontale fra i due
           picchi intermedi, e due lati di durata confrontabile. Senza questi

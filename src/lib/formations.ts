@@ -18,12 +18,22 @@
 import type { OHLCV } from './yahoo';
 import { findPivots, type Pivot } from './patterns';
 
-export type FormationKind = 'IHS' | 'DOUBLE_BOTTOM';
+export type FormationKind = 'IHS' | 'DOUBLE_BOTTOM' | 'HS' | 'DOUBLE_TOP';
+export type FormationDirection = 'bullish' | 'bearish';
 export type FormationState = 'forming' | 'right_shoulder' | 'confirmed';
 
 export const FORMATION_LABELS: Record<FormationKind, string> = {
   IHS: 'Testa e spalle rovesciato',
   DOUBLE_BOTTOM: 'Doppio minimo',
+  HS: 'Testa e spalle',
+  DOUBLE_TOP: 'Doppio massimo',
+};
+
+export const FORMATION_DIRECTION: Record<FormationKind, FormationDirection> = {
+  IHS: 'bullish',
+  DOUBLE_BOTTOM: 'bullish',
+  HS: 'bearish',
+  DOUBLE_TOP: 'bearish',
 };
 
 /**
@@ -33,7 +43,10 @@ export const FORMATION_LABELS: Record<FormationKind, string> = {
 export function stateLabel(kind: FormationKind, state: FormationState): string {
   if (state === 'confirmed') return 'Linea del collo rotta';
   if (state === 'forming') return 'In formazione';
-  return kind === 'IHS' ? 'Spalla destra completata' : 'Secondo minimo formato';
+  if (kind === 'IHS' || kind === 'HS') return 'Spalla destra completata';
+  return kind === 'DOUBLE_TOP'
+    ? 'Secondo massimo formato'
+    : 'Secondo minimo formato';
 }
 
 export const STATE_LABELS: Record<FormationState, string> = {
@@ -52,6 +65,7 @@ export type FormationPoint = {
 export type Formation = {
   ticker: string;
   kind: FormationKind;
+  direction: FormationDirection;
   state: FormationState;
   points: FormationPoint[];
   /** Livello di conferma: rottura al rialzo = figura completata */
@@ -160,6 +174,68 @@ function hasPriorDecline(
   return (start - end) / start >= minDrop;
 }
 
+/**
+ * Speculare di prominence: un massimo e' strutturale solo se il prezzo
+ * poi scende in modo apprezzabile.
+ */
+function prominenceHigh(
+  candles: OHLCV[],
+  highIdx: number,
+  window: number
+): number {
+  const to = Math.min(candles.length - 1, highIdx + window);
+  let minAfter = Infinity;
+  for (let i = highIdx; i <= to; i++) {
+    if (candles[i].l < minAfter) minAfter = candles[i].l;
+  }
+  const high = candles[highIdx].h;
+  if (!Number.isFinite(minAfter) || high <= 0) return 0;
+  return (high - minAfter) / high;
+}
+
+/** Una figura ribassista di inversione richiede una salita che la preceda. */
+function hasPriorRise(
+  candles: OHLCV[],
+  idx: number,
+  lookback: number,
+  minRise: number
+): boolean {
+  const from = idx - lookback;
+  if (from < 0) return false;
+  const start = candles[from].c;
+  const end = candles[idx].h;
+  if (start <= 0) return false;
+  return (end - start) / start >= minRise;
+}
+
+/** Punto piu' alto in un intervallo: e' il secondo massimo reale. */
+function peakOnly(
+  candles: OHLCV[],
+  from: number,
+  to: number
+): { idx: number; price: number } | null {
+  if (to - from < 2) return null;
+  let best = { idx: -1, price: -Infinity };
+  for (let i = from + 1; i <= to; i++) {
+    if (candles[i].h > best.price) best = { idx: i, price: candles[i].h };
+  }
+  return best.idx >= 0 ? best : null;
+}
+
+/** Minimo delle chiusure in un intervallo, escludendo gli estremi. */
+function valleyBetween(
+  candles: OHLCV[],
+  from: number,
+  to: number
+): { idx: number; price: number } | null {
+  if (to - from < 3) return null;
+  let best = { idx: -1, price: Infinity };
+  for (let i = from + 1; i < to; i++) {
+    if (candles[i].l < best.price) best = { idx: i, price: candles[i].l };
+  }
+  return best.idx >= 0 ? best : null;
+}
+
 /** Punto piu' basso in un intervallo: e' il secondo minimo reale. */
 function troughBetween(
   candles: OHLCV[],
@@ -202,7 +278,8 @@ export function detectFormations(
 
   const pivots = findPivots(candles, o.leftBars, o.rightBars);
   const lows = pivots.filter((p) => p.type === 'low');
-  if (lows.length < 2) return [];
+  const highs = pivots.filter((p) => p.type === 'high');
+  if (lows.length < 2 && highs.length < 2) return [];
 
   const out: Formation[] = [];
 
@@ -310,6 +387,7 @@ export function detectFormations(
     out.push({
       ticker,
       kind: 'IHS',
+      direction: 'bullish',
       state,
       points,
       neckline,
@@ -400,6 +478,7 @@ export function detectFormations(
     out.push({
       ticker,
       kind: 'DOUBLE_BOTTOM',
+      direction: 'bullish',
       state,
       points,
       neckline,
@@ -409,6 +488,185 @@ export function detectFormations(
       distanceToNecklinePct: ((neckline - price) / price) * 100,
       depthPct,
       target: neckline + (neckline - l1.price),
+      barsSpan: span,
+      lastDate: isoDate(candles[lastIdx].t),
+    });
+    break;
+  }
+
+  // ------------------------------------------------------------------
+  // TESTA E SPALLE (ribassista)
+  //
+  // Speculare del rovesciato: salita, spalla sinistra, discesa al primo
+  // minimo, massimo piu' alto (testa), discesa al secondo minimo, spalla
+  // destra all'altezza della sinistra. Si conferma rompendo il collo
+  // verso il BASSO.
+  // ------------------------------------------------------------------
+  for (let i = highs.length - 1; i >= 1; i--) {
+    const head = highs[i];
+    const ls = highs[i - 1];
+
+    if (head.price <= ls.price * (1 + o.headDepthMin)) continue;
+
+    const span = lastIdx - ls.idx;
+    if (span < o.durationMin || span > o.durationMax) continue;
+
+    if (prominenceHigh(candles, ls.idx, 25) < PIVOT_PROMINENCE_MIN) continue;
+    if (prominenceHigh(candles, head.idx, 25) < PIVOT_PROMINENCE_MIN) continue;
+
+    // Serve una salita precedente: e' un'inversione al ribasso
+    if (!hasPriorRise(candles, ls.idx, 30, PRIOR_DECLINE_MIN)) continue;
+
+    const valley1 = valleyBetween(candles, ls.idx, head.idx);
+    if (!valley1) continue;
+    const valley2 = valleyBetween(candles, head.idx, lastIdx);
+    if (!valley2) continue;
+
+    const slope =
+      Math.abs(valley2.price - valley1.price) /
+      Math.max(valley1.price, valley2.price);
+    if (slope > NECKLINE_SLOPE_MAX) continue;
+
+    const neckline = (valley1.price + valley2.price) / 2;
+    if (!Number.isFinite(neckline) || neckline <= 0) continue;
+
+    if (ls.price <= neckline || head.price <= neckline) continue;
+
+    const depthPct = ((head.price - neckline) / neckline) * 100;
+    if (depthPct < o.minDepthPct) continue;
+
+    const rsCandidates = highs.filter(
+      (p) =>
+        p.idx > valley1.idx &&
+        p.idx > head.idx &&
+        Math.abs(p.price - ls.price) / ls.price <= o.levelTolerance &&
+        p.price < head.price &&
+        p.price > neckline
+    );
+    const rs: Pivot | null =
+      rsCandidates.length > 0 ? rsCandidates[rsCandidates.length - 1] : null;
+
+    if (rs) {
+      const leftSpan = head.idx - ls.idx;
+      const rightSpan = rs.idx - head.idx;
+      const avg = (leftSpan + rightSpan) / 2;
+      if (avg > 0 && Math.abs(leftSpan - rightSpan) / avg > TIME_ASYMMETRY_MAX) {
+        continue;
+      }
+    }
+
+    const distFromShoulder = Math.abs(price - ls.price) / ls.price;
+
+    let state: FormationState;
+    if (price < neckline) {
+      state = 'confirmed';
+    } else if (rs) {
+      state = 'right_shoulder';
+    } else if (
+      distFromShoulder <= o.returnTolerance &&
+      price < head.price &&
+      lastIdx > valley2.idx
+    ) {
+      state = 'forming';
+    } else {
+      continue;
+    }
+
+    const points: FormationPoint[] = [
+      { time: candles[ls.idx].t, price: ls.price, label: 'Spalla sinistra' },
+      { time: candles[head.idx].t, price: head.price, label: 'Testa' },
+    ];
+    if (rs) {
+      points.push({
+        time: candles[rs.idx].t,
+        price: rs.price,
+        label: 'Spalla destra',
+      });
+    }
+
+    out.push({
+      ticker,
+      kind: 'HS',
+      direction: 'bearish',
+      state,
+      points,
+      neckline,
+      necklineFrom: { time: candles[valley1.idx].t, price: valley1.price },
+      necklineTo: { time: candles[valley2.idx].t, price: valley2.price },
+      price,
+      distanceToNecklinePct: ((neckline - price) / price) * 100,
+      depthPct,
+      target: neckline - (head.price - neckline),
+      barsSpan: span,
+      lastDate: isoDate(candles[lastIdx].t),
+    });
+    break;
+  }
+
+  // ------------------------------------------------------------------
+  // DOPPIO MASSIMO
+  //
+  // Due massimi allo stesso livello separati da un minimo significativo,
+  // preceduti da una salita. Si conferma rompendo quel minimo.
+  // ------------------------------------------------------------------
+  for (let i = highs.length - 1; i >= 0; i--) {
+    const h1 = highs[i];
+    const span = lastIdx - h1.idx;
+    if (span < o.durationMin || span > o.durationMax) continue;
+
+    if (prominenceHigh(candles, h1.idx, 25) < PIVOT_PROMINENCE_MIN) continue;
+    if (!hasPriorRise(candles, h1.idx, 30, PRIOR_DECLINE_MIN)) continue;
+
+    const valley = valleyBetween(candles, h1.idx, lastIdx);
+    if (!valley) continue;
+    const neckline = valley.price;
+    const depthPct = ((h1.price - neckline) / h1.price) * 100;
+    if (depthPct < o.minDepthPct) continue;
+
+    // Il secondo massimo e' il punto piu' alto dopo il minimo intermedio
+    const crest = peakOnly(candles, valley.idx, lastIdx);
+    if (!crest) continue;
+
+    const levelDiff = Math.abs(crest.price - h1.price) / h1.price;
+    if (levelDiff > o.levelTolerance) continue;
+
+    const h2 = highs.find(
+      (p) => p.idx > valley.idx && Math.abs(p.idx - crest.idx) <= 2
+    );
+    const crestIsRecent = lastIdx - crest.idx <= o.rightBars;
+
+    let state: FormationState;
+    if (h2 && price < neckline) {
+      state = 'confirmed';
+    } else if (h2 && !crestIsRecent) {
+      state = 'right_shoulder';
+    } else {
+      state = 'forming';
+    }
+
+    const points: FormationPoint[] = [
+      { time: candles[h1.idx].t, price: h1.price, label: 'Primo massimo' },
+      { time: candles[valley.idx].t, price: valley.price, label: 'Minimo' },
+      {
+        time: candles[crest.idx].t,
+        price: crest.price,
+        label: crestIsRecent ? 'Secondo massimo (in corso)' : 'Secondo massimo',
+      },
+    ];
+
+    out.push({
+      ticker,
+      kind: 'DOUBLE_TOP',
+      direction: 'bearish',
+      state,
+      points,
+      neckline,
+      necklineFrom: { time: candles[valley.idx].t, price: neckline },
+      necklineTo: { time: candles[lastIdx].t, price: neckline },
+      price,
+      distanceToNecklinePct: ((neckline - price) / price) * 100,
+      depthPct,
+      target: neckline - (h1.price - neckline),
       barsSpan: span,
       lastDate: isoDate(candles[lastIdx].t),
     });
