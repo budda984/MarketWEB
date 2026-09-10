@@ -1,23 +1,102 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { yahooExtendedQuoteMany, type ExtendedQuote } from '@/lib/yahoo';
-import { MARKETS, type MarketKey } from '@/lib/tickers';
-import { getMarketSession } from '@/lib/market-hours';
+import {
+  yahooQuoteBatch,
+  yahooPredefinedScreen,
+  yahooTrending,
+  type BatchQuote,
+} from '@/lib/yahoo-market';
+import { MARKETS } from '@/lib/tickers';
+import { getMarketSession, type MarketSession } from '@/lib/market-hours';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 /**
- * GET /api/movers?universe=sp500|nasdaq|both&limit=20&minChange=1
+ * GET /api/movers?universe=sp500|nasdaq|both|all&limit=20&minChange=1
  *
- * Yahoo non espone dai datacenter le classifiche pre-market gia' pronte
- * (l'endpoint screener risponde 403, come quoteSummary e search): le
- * costruiamo interrogando i singoli titoli e ordinando noi.
+ * Tre fonti, in ordine di preferenza:
  *
- * Il costo e' una richiesta per titolo, quindi l'universo va tenuto
- * sotto controllo per rientrare nei 60s di Vercel.
+ *  - classifiche pronte di Yahoo (universe=all, sessione regolare): tutto
+ *    il mercato USA gia' ordinato, due richieste;
+ *  - quotazioni a lotti: prezzi di pre-market e after-hours gia' pronti,
+ *    150 titoli per richiesta;
+ *  - candele a 5 minuti titolo per titolo: il metodo di prima, tenuto come
+ *    ripiego se la sessione Yahoo non risponde.
+ *
+ * Yahoo non pubblica una classifica del pre-market. Con universe=all,
+ * fuori dalla sessione regolare, l'elenco dei candidati si allarga a
+ * S&P 500 e NASDAQ piu' i titoli piu' scambiati, i maggiori rialzi e
+ * ribassi della sessione precedente e i piu' cercati.
  */
+
+type Source = 'screener' | 'batch' | 'candles';
+
+// Oltre questa eta' un prezzo esteso e' del giorno prima
+const MAX_EXT_AGE_SEC = 12 * 3600;
+
+/** Da quotazione a lotti al formato della vista, secondo la sessione */
+function fromBatch(
+  q: BatchQuote,
+  session: MarketSession,
+  nowSec: number
+): ExtendedQuote | null {
+  const reg = q.regularMarketPrice;
+  if (reg == null || reg <= 0) return null;
+  const regTime = q.regularMarketTime ?? 0;
+
+  const base = {
+    ticker: q.symbol,
+    name: q.name,
+    currency: q.currency ?? undefined,
+    exchangeName: q.exchangeName ?? undefined,
+    regularMarketTime: q.regularMarketTime,
+    extendedVolume: null,
+  };
+
+  // Prezzo esteso valido solo se successivo all'ultimo scambio regolare
+  // e recente: altrimenti e' quello della sessione precedente
+  const ext =
+    session === 'pre'
+      ? { price: q.preMarketPrice, time: q.preMarketTime, kind: 'pre' as const }
+      : session === 'post'
+        ? { price: q.postMarketPrice, time: q.postMarketTime, kind: 'post' as const }
+        : null;
+
+  if (
+    ext &&
+    ext.price != null &&
+    ext.price > 0 &&
+    ext.time != null &&
+    ext.time > regTime &&
+    nowSec - ext.time < MAX_EXT_AGE_SEC
+  ) {
+    return {
+      ...base,
+      session: ext.kind,
+      price: ext.price,
+      previousClose: reg,
+      changePct: ((ext.price - reg) / reg) * 100,
+      quoteTime: ext.time,
+      ageSec: nowSec - ext.time,
+    };
+  }
+
+  const prev = q.regularMarketPreviousClose;
+  if (prev == null || prev <= 0) return null;
+  return {
+    ...base,
+    session: 'regular',
+    price: reg,
+    previousClose: prev,
+    changePct: q.regularMarketChangePercent ?? ((reg - prev) / prev) * 100,
+    quoteTime: q.regularMarketTime,
+    ageSec: regTime ? nowSec - regTime : null,
+  };
+}
+
 export async function GET(req: Request) {
   const supabase = createClient();
   const {
@@ -90,42 +169,92 @@ export async function GET(req: Request) {
     });
   }
 
-  const universeParam = url.searchParams.get('universe') ?? 'sp500';
+  const universeParam = url.searchParams.get('universe') ?? 'both';
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 20), 50);
   const minChange = Number(url.searchParams.get('minChange') ?? 1);
 
   const t0 = Date.now();
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  // LA SESSIONE SI DEDUCE DALL'OROLOGIO, NON DAI DATI.
+  //
+  // Contare quanti titoli hanno gia' scambiato per decidere se il
+  // pre-market e' aperto porta a dichiararlo chiuso proprio nei primi
+  // minuti, quando hanno scambiato in pochi: e' cosi' che la vista
+  // finiva per mostrare la chiusura del giorno prima.
+  const marketInfo = getMarketSession();
+  const extended = marketInfo.session === 'pre' || marketInfo.session === 'post';
 
   try {
-    let tickers: string[];
-    if (universeParam === 'nasdaq') {
-      tickers = [...((MARKETS['NASDAQ'] as readonly string[]) ?? [])];
-    } else if (universeParam === 'both') {
-      tickers = Array.from(
-        new Set([
-          ...((MARKETS['S&P 500'] as readonly string[]) ?? []),
-          ...((MARKETS['NASDAQ'] as readonly string[]) ?? []),
-        ])
-      );
-    } else {
-      tickers = [...((MARKETS['S&P 500'] as readonly string[]) ?? [])];
+    const sp = (MARKETS['S&P 500'] as readonly string[]) ?? [];
+    const nq = (MARKETS['NASDAQ'] as readonly string[]) ?? [];
+    let tickers: string[] =
+      universeParam === 'sp500'
+        ? [...sp]
+        : universeParam === 'nasdaq'
+          ? [...nq]
+          : Array.from(new Set([...sp, ...nq]));
+
+    let all: ExtendedQuote[] = [];
+    let source: Source = 'batch';
+    let truncated = false;
+
+    // --- 1. Tutto il mercato, sessione regolare: classifiche pronte ----
+    if (universeParam === 'all' && !extended) {
+      const [up, down] = await Promise.all([
+        yahooPredefinedScreen('day_gainers', 50),
+        yahooPredefinedScreen('day_losers', 50),
+      ]);
+      if (up && down) {
+        source = 'screener';
+        const seen = new Set<string>();
+        for (const q of [...up, ...down]) {
+          if (seen.has(q.symbol)) continue;
+          seen.add(q.symbol);
+          const e = fromBatch(q, 'regular', nowSec);
+          if (e) all.push(e);
+        }
+        tickers = Array.from(seen);
+      }
     }
 
-    // Tetto prudenziale: oltre questa soglia si rischia il timeout.
-    const MAX_TICKERS = 320;
-    const truncated = tickers.length > MAX_TICKERS;
-    if (truncated) tickers = tickers.slice(0, MAX_TICKERS);
+    // --- 2. Quotazioni a lotti ----------------------------------------
+    if (source !== 'screener') {
+      if (universeParam === 'all') {
+        // Candidati extra per le sessioni estese: chi si e' mosso o e'
+        // stato scambiato di piu' ieri, e chi e' piu' cercato oggi
+        const [actives, up, down, trending] = await Promise.all([
+          yahooPredefinedScreen('most_actives', 100),
+          yahooPredefinedScreen('day_gainers', 100),
+          yahooPredefinedScreen('day_losers', 100),
+          yahooTrending(30),
+        ]);
+        const extra = [
+          ...(actives ?? []).map((q) => q.symbol),
+          ...(up ?? []).map((q) => q.symbol),
+          ...(down ?? []).map((q) => q.symbol),
+          ...trending,
+        ];
+        tickers = Array.from(new Set([...tickers, ...extra]));
+      }
 
-    const quotes = await yahooExtendedQuoteMany(tickers, 10);
-    const all = Object.values(quotes);
+      const batch = await yahooQuoteBatch(tickers);
+      if (batch) {
+        source = 'batch';
+        for (const q of Object.values(batch)) {
+          const e = fromBatch(q, marketInfo.session, nowSec);
+          if (e) all.push(e);
+        }
+      } else {
+        // --- 3. Ripiego: candele titolo per titolo --------------------
+        source = 'candles';
+        const MAX_TICKERS = 320;
+        truncated = tickers.length > MAX_TICKERS;
+        if (truncated) tickers = tickers.slice(0, MAX_TICKERS);
+        all = Object.values(await yahooExtendedQuoteMany(tickers, 10));
+      }
+    }
 
-    // LA SESSIONE SI DEDUCE DALL'OROLOGIO, NON DAI DATI.
-    //
-    // Contare quanti titoli hanno gia' scambiato per decidere se il
-    // pre-market e' aperto porta a dichiararlo chiuso proprio nei primi
-    // minuti, quando hanno scambiato in pochi: e' cosi' che la vista
-    // finiva per mostrare la chiusura del giorno prima.
-    const marketInfo = getMarketSession();
     const counts = { pre: 0, post: 0, regular: 0, none: 0 };
     for (const q of all) counts[q.session]++;
 
@@ -133,31 +262,25 @@ export async function GET(req: Request) {
     // scambiato in quella sessione. Gli altri riportano la variazione
     // regolare e falserebbero la classifica.
     let session: ExtendedQuote['session'];
-    let inSessionQuotes: ExtendedQuote[];
-
+    let relevant: ExtendedQuote[];
     if (marketInfo.session === 'pre') {
       session = 'pre';
-      inSessionQuotes = all.filter((q) => q.session === 'pre');
+      relevant = all.filter((q) => q.session === 'pre');
     } else if (marketInfo.session === 'post') {
       session = 'post';
-      inSessionQuotes = all.filter((q) => q.session === 'post');
+      relevant = all.filter((q) => q.session === 'post');
     } else {
       session = 'regular';
-      inSessionQuotes = all;
+      relevant = all;
     }
 
-    const latestQuoteTime = inSessionQuotes.reduce<number | null>(
+    const latestQuoteTime = relevant.reduce<number | null>(
       (max, q) =>
         q.quoteTime != null && (max == null || q.quoteTime > max)
           ? q.quoteTime
           : max,
       null
     );
-
-    // In sessione estesa considero solo i titoli che hanno effettivamente
-    // scambiato: gli altri riporterebbero la variazione regolare,
-    // falsando la classifica.
-    const relevant = inSessionQuotes;
 
     const filtered = relevant.filter(
       (q) => Number.isFinite(q.changePct) && Math.abs(q.changePct) >= minChange
@@ -173,14 +296,29 @@ export async function GET(req: Request) {
       .sort((a, b) => a.changePct - b.changePct)
       .slice(0, limit);
 
+    // Volume della sessione estesa: le quotazioni a lotti non lo danno,
+    // le candele si'. Si scaricano solo per i titoli in classifica.
+    if (extended && source === 'batch' && Date.now() - t0 < 30_000) {
+      const shown = [...gainers, ...losers];
+      const vols = await yahooExtendedQuoteMany(
+        shown.map((q) => q.ticker),
+        10
+      );
+      for (const q of shown) {
+        const v = vols[q.ticker];
+        if (v && v.session === q.session) q.extendedVolume = v.extendedVolume;
+      }
+    }
+
     return NextResponse.json({
       session,
+      source,
       gainers,
       losers,
       // Secondi unix del dato piu' recente: la vista lo mostra cosi'
       // l'utente sa sempre a quando risale quello che sta guardando
       latestQuoteTime,
-      serverTime: Math.floor(Date.now() / 1000),
+      serverTime: nowSec,
       sessionCounts: counts,
       marketInfo,
       stats: {

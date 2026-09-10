@@ -13,6 +13,7 @@ import {
 
 type Quote = {
   ticker: string;
+  name?: string | null;
   session: 'pre' | 'post' | 'regular' | 'none';
   price: number;
   previousClose: number;
@@ -42,6 +43,13 @@ type Props = {
   onOpenTicker: (ticker: string) => void;
 };
 
+// Da dove arrivano i numeri: lo si dice sotto i filtri
+const SOURCE_LABEL: Record<string, string> = {
+  screener: 'classifica Yahoo su tutto il mercato',
+  batch: 'quotazioni Yahoo a lotti',
+  candles: 'ricostruzione titolo per titolo (ripiego)',
+};
+
 const SESSION_LABEL: Record<string, string> = {
   pre: 'Pre-market',
   post: 'After-hours',
@@ -56,7 +64,8 @@ export default function MoversView({ onOpenTicker }: Props) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [universe, setUniverse] = useState('sp500');
+  const [universe, setUniverse] = useState('both');
+  const [source, setSource] = useState<string | null>(null);
   const [minChange, setMinChange] = useState(1);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [latestQuoteTime, setLatestQuoteTime] = useState<number | null>(null);
@@ -84,6 +93,7 @@ export default function MoversView({ onOpenTicker }: Props) {
       setGainers(d.gainers ?? []);
       setLosers(d.losers ?? []);
       setSession(d.session ?? 'regular');
+      setSource(d.source ?? null);
       setStats(d.stats ?? null);
       setLatestQuoteTime(d.latestQuoteTime ?? null);
       setServerTime(d.serverTime ?? null);
@@ -158,6 +168,7 @@ export default function MoversView({ onOpenTicker }: Props) {
               <option value="sp500">S&amp;P 500</option>
               <option value="nasdaq">NASDAQ</option>
               <option value="both">Entrambi</option>
+              <option value="all">Tutto il mercato USA</option>
             </select>
           </label>
           <label className="flex items-center gap-1.5 text-xs">
@@ -176,7 +187,8 @@ export default function MoversView({ onOpenTicker }: Props) {
         </div>
 
         {stats && !loading && (
-          <div className="text-xs text-brand-muted">
+          <div className="text-xs text-brand-muted break-words">
+            {source && SOURCE_LABEL[source] && <>{SOURCE_LABEL[source]} · </>}
             {stats.answered}/{stats.requested} risposte ·{' '}
             {stats.inSession} in sessione · {(stats.elapsedMs / 1000).toFixed(1)}s
             {stats.truncated && (
@@ -235,11 +247,13 @@ export default function MoversView({ onOpenTicker }: Props) {
           <Info className="w-3.5 h-3.5" /> Da tenere presente
         </div>
         <p>
-          Yahoo non espone le classifiche pre-market già pronte dai server
-          cloud, quindi vengono ricostruite interrogando i titoli uno per
-          uno. Sono coperti S&amp;P 500 e NASDAQ, non l&apos;intero mercato
-          USA: un titolo minore che si muove molto in pre-market non
-          comparirà.
+          Con <strong>Tutto il mercato USA</strong>, durante la sessione
+          regolare si usano le classifiche di Yahoo su tutte le azioni
+          americane. Yahoo non ne pubblica per pre-market e after-hours:
+          in quelle ore ai titoli di S&amp;P 500 e NASDAQ si aggiungono i più
+          scambiati, i maggiori rialzi e ribassi della sessione precedente e
+          i più cercati. Un titolo minore che si muove per una notizia
+          uscita nella notte può comunque mancare.
         </p>
         <p>
           Nel pre-market gli scambi sono sottili e il divario denaro-lettera
@@ -290,7 +304,12 @@ function MoverList({
                 {i + 1}
               </span>
               <div className="flex-1 min-w-0">
-                <div className="font-bold text-sm">{q.ticker}</div>
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <span className="font-bold text-sm flex-shrink-0">{q.ticker}</span>
+                  {q.name && (
+                    <span className="text-xs text-brand-muted truncate">{q.name}</span>
+                  )}
+                </div>
                 <div className="text-xs text-brand-muted font-mono">
                   {q.price.toFixed(2)} · chiusura{' '}
                   {q.previousClose.toFixed(2)}

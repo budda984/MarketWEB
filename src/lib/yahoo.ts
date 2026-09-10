@@ -267,6 +267,8 @@ export async function yahooQuoteFull(
  */
 export type ExtendedQuote = {
   ticker: string;
+  /** Nome della societa', quando la fonte lo fornisce */
+  name?: string | null;
   session: 'pre' | 'post' | 'regular' | 'none';
   /** Prezzo della sessione estesa, o l'ultimo regolare se non disponibile */
   price: number;
