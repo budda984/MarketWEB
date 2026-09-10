@@ -415,3 +415,126 @@ export async function yahooExtendedQuoteMany(
   );
   return out;
 }
+
+
+// ============================================================================
+// SESSIONE YAHOO (cookie + crumb)
+// ============================================================================
+
+/**
+ * Diversi endpoint Yahoo non sono bloccati per indirizzo ma richiedono
+ * una sessione: un cookie di consenso e un "crumb", cioe' un token
+ * legato a quel cookie. Senza, rispondono 401 "Invalid Crumb".
+ *
+ * La procedura e' in due passaggi: si ottiene il cookie visitando un
+ * dominio Yahoo, poi si chiede il crumb presentando quel cookie. I due
+ * vanno poi usati insieme a ogni richiesta.
+ *
+ * La sessione si conserva in memoria perche' ottenerla costa due
+ * richieste: rifarla ogni volta triplicherebbe il traffico.
+ */
+type YahooSession = { cookie: string; crumb: string; at: number };
+
+let sessionCache: YahooSession | null = null;
+const SESSION_TTL_MS = 30 * 60 * 1000;
+
+export async function getYahooSession(
+  force = false
+): Promise<YahooSession | null> {
+  if (!force && sessionCache && Date.now() - sessionCache.at < SESSION_TTL_MS) {
+    return sessionCache;
+  }
+
+  const browserUA =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  try {
+    // 1. Cookie. fc.yahoo.com risponde spesso con un errore, ma i
+    //    cookie li imposta lo stesso: quello che conta e' l'intestazione.
+    let cookie = '';
+    for (const seed of [
+      'https://fc.yahoo.com/',
+      'https://finance.yahoo.com/',
+    ]) {
+      try {
+        const res = await fetch(seed, {
+          headers: { 'User-Agent': browserUA },
+          redirect: 'follow',
+          signal: AbortSignal.timeout(8000),
+        });
+        const jar = res.headers.getSetCookie?.() ?? [];
+        const parts = jar
+          .map((c) => c.split(';')[0])
+          .filter((c) => /^(A1|A3|A1S|GUC|B)=/.test(c));
+        if (parts.length > 0) {
+          cookie = parts.join('; ');
+          break;
+        }
+      } catch {
+        // il prossimo dominio
+      }
+    }
+    if (!cookie) return null;
+
+    // 2. Crumb, presentando il cookie appena ottenuto
+    const crumbRes = await fetch(
+      'https://query2.finance.yahoo.com/v1/test/getcrumb',
+      {
+        headers: {
+          'User-Agent': browserUA,
+          Accept: 'text/plain, */*',
+          Cookie: cookie,
+        },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    if (!crumbRes.ok) return null;
+    const crumb = (await crumbRes.text()).trim();
+    if (!crumb || crumb.length > 40 || crumb.includes('<')) return null;
+
+    sessionCache = { cookie, crumb, at: Date.now() };
+    return sessionCache;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Richiesta autenticata a Yahoo. Se la sessione e' scaduta, la rinnova
+ * una volta sola e riprova: un secondo fallimento significa che il
+ * problema non e' la sessione.
+ */
+export async function yahooAuthedFetch(
+  buildUrl: (crumb: string) => string,
+  init: RequestInit = {},
+  timeoutMs = 12000
+): Promise<Response | null> {
+  const browserUA =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const session = await getYahooSession(attempt > 0);
+    if (!session) return null;
+    try {
+      const res = await fetch(buildUrl(session.crumb), {
+        ...init,
+        headers: {
+          'User-Agent': browserUA,
+          Accept: 'application/json',
+          Cookie: session.cookie,
+          ...(init.headers ?? {}),
+        },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.status === 401 && attempt === 0) {
+        sessionCache = null; // crumb scaduto: rinnovo e riprovo
+        continue;
+      }
+      return res;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}

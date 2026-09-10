@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { getYahooSession, yahooAuthedFetch } from '@/lib/yahoo';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -75,5 +76,87 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ ticker, results });
+  // ------------------------------------------------------------------
+  // Prova con la sessione: cookie + crumb.
+  // Il 401 "Invalid Crumb" indica che l'endpoint e' raggiungibile e
+  // manca solo l'autenticazione, quindi vale la pena verificarlo.
+  // ------------------------------------------------------------------
+  const session = await getYahooSession(true);
+  const authed: Array<Record<string, unknown>> = [];
+
+  if (!session) {
+    authed.push({
+      endpoint: 'sessione',
+      status: null,
+      ok: false,
+      bodyStart: 'Impossibile ottenere cookie e crumb da Yahoo.',
+    });
+  } else {
+    authed.push({
+      endpoint: 'sessione',
+      status: 200,
+      ok: true,
+      bodyStart: `crumb ottenuto (${session.crumb.length} caratteri), cookie presente`,
+    });
+
+    // quoteSummary con crumb: date trimestrali e fondamentali
+    const qs = await yahooAuthedFetch(
+      (crumb) =>
+        `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${ticker}` +
+        `?modules=calendarEvents,earnings,defaultKeyStatistics,summaryDetail&crumb=${encodeURIComponent(crumb)}`
+    );
+    if (qs) {
+      const body = await qs.text();
+      authed.push({
+        endpoint: 'quoteSummary con crumb',
+        status: qs.status,
+        ok: qs.ok,
+        bodyStart: body.slice(0, 400),
+      });
+    }
+
+    // Calendario delle trimestrali: e' un POST, non un GET
+    const viz = await yahooAuthedFetch(
+      (crumb) =>
+        `https://query1.finance.yahoo.com/v1/finance/visualization?crumb=${encodeURIComponent(crumb)}&lang=en-US&region=US`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          size: 5,
+          offset: 0,
+          sortField: 'startdatetime',
+          sortType: 'ASC',
+          entityIdType: 'earnings',
+          includeFields: [
+            'ticker',
+            'companyshortname',
+            'startdatetime',
+            'epsestimate',
+            'epsactual',
+          ],
+          query: {
+            operator: 'and',
+            operands: [
+              {
+                operator: 'gte',
+                operands: ['startdatetime', new Date().toISOString().slice(0, 10)],
+              },
+            ],
+          },
+        }),
+      }
+    );
+    if (viz) {
+      const body = await viz.text();
+      authed.push({
+        endpoint: 'calendario trimestrali (POST)',
+        status: viz.status,
+        ok: viz.ok,
+        bodyStart: body.slice(0, 400),
+      });
+    }
+  }
+
+  return NextResponse.json({ ticker, senzaSessione: results, conSessione: authed });
 }
