@@ -538,3 +538,114 @@ export async function yahooAuthedFetch(
   }
   return null;
 }
+
+// ============================================================================
+// CALENDARIO DELLE TRIMESTRALI
+// ============================================================================
+
+/**
+ * Date di pubblicazione annunciate dalle societa'.
+ *
+ * L'endpoint e' quello che alimenta la pagina delle trimestrali di
+ * Yahoo: vuole una POST con un filtro, e la sessione con crumb.
+ * Sostituisce le stime ricavate dalla cadenza dei depositi, che erano
+ * un ripiego.
+ */
+export type EarningsEvent = {
+  ticker: string;
+  companyName: string | null;
+  /** Momento della pubblicazione, ISO */
+  dateTime: string;
+  /** Prima dell'apertura, dopo la chiusura, o durante */
+  timing: string | null;
+  epsEstimate: number | null;
+  epsActual: number | null;
+  surprisePct: number | null;
+};
+
+export async function fetchEarningsCalendar(
+  fromDate: string,
+  toDate: string,
+  size = 250,
+  offset = 0
+): Promise<{ events: EarningsEvent[]; total: number } | null> {
+  const res = await yahooAuthedFetch(
+    (crumb) =>
+      `https://query1.finance.yahoo.com/v1/finance/visualization?crumb=${encodeURIComponent(crumb)}&lang=en-US&region=US`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        size,
+        offset,
+        sortField: 'startdatetime',
+        sortType: 'ASC',
+        entityIdType: 'earnings',
+        includeFields: [
+          'ticker',
+          'companyshortname',
+          'startdatetime',
+          'startdatetimetype',
+          'epsestimate',
+          'epsactual',
+          'epssurprisepct',
+        ],
+        query: {
+          operator: 'and',
+          operands: [
+            { operator: 'gte', operands: ['startdatetime', fromDate] },
+            { operator: 'lt', operands: ['startdatetime', toDate] },
+          ],
+        },
+      }),
+    },
+    20000
+  );
+
+  if (!res || !res.ok) return null;
+
+  try {
+    const json = await res.json();
+    const doc = json?.finance?.result?.[0]?.documents?.[0];
+    if (!doc) return { events: [], total: 0 };
+
+    const cols: string[] = (doc.columns ?? []).map(
+      (c: { id?: string }) => c.id ?? ''
+    );
+    const rows: unknown[][] = doc.rows ?? [];
+    const idx = (name: string) => cols.indexOf(name);
+
+    const iTicker = idx('ticker');
+    const iName = idx('companyshortname');
+    const iWhen = idx('startdatetime');
+    const iType = idx('startdatetimetype');
+    const iEst = idx('epsestimate');
+    const iAct = idx('epsactual');
+    const iSur = idx('epssurprisepct');
+
+    const num = (v: unknown): number | null => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const events: EarningsEvent[] = [];
+    for (const r of rows) {
+      const tk = iTicker >= 0 ? String(r[iTicker] ?? '') : '';
+      const when = iWhen >= 0 ? String(r[iWhen] ?? '') : '';
+      if (!tk || !when) continue;
+      events.push({
+        ticker: tk.toUpperCase(),
+        companyName: iName >= 0 ? (r[iName] as string) ?? null : null,
+        dateTime: when,
+        timing: iType >= 0 ? (r[iType] as string) ?? null : null,
+        epsEstimate: iEst >= 0 ? num(r[iEst]) : null,
+        epsActual: iAct >= 0 ? num(r[iAct]) : null,
+        surprisePct: iSur >= 0 ? num(r[iSur]) : null,
+      });
+    }
+
+    return { events, total: Number(doc.total ?? events.length) };
+  } catch {
+    return null;
+  }
+}

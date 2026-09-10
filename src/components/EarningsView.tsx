@@ -5,7 +5,6 @@ import {
   CalendarDays,
   ExternalLink,
   Info,
-  AlertTriangle,
   Search,
   Loader2,
 } from 'lucide-react';
@@ -21,22 +20,35 @@ type Report = {
   form: string | null;
 };
 
-type Upcoming = {
+type CalendarEvent = {
+  id: string;
   ticker: string;
-  next_report_estimate: string;
-  cadence_days: number | null;
-  last_report_date: string | null;
+  report_date: string;
+  company_name: string | null;
+  timing: string | null;
+  eps_estimate: number | null;
+  eps_actual: number | null;
+  surprise_pct: number | null;
+};
+
+const TIMING_LABEL: Record<string, string> = {
+  BMO: 'prima apertura',
+  AMC: 'dopo chiusura',
+  TAS: 'durante seduta',
+  TNS: 'orario non comunicato',
 };
 
 type Props = { onOpenTicker: (t: string) => void };
 
 export default function EarningsView({ onOpenTicker }: Props) {
   const [reports, setReports] = useState<Report[]>([]);
-  const [upcoming, setUpcoming] = useState<Upcoming[]>([]);
+  const [upcoming, setUpcoming] = useState<CalendarEvent[]>([]);
+  const [justReported, setJustReported] = useState<CalendarEvent[]>([]);
+  const [syncing, setSyncing] = useState(false);
   const [lastScan, setLastScan] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
+  const [tab, setTab] = useState<'upcoming' | 'reported' | 'past'>('upcoming');
   const [query, setQuery] = useState('');
   const [fetching, setFetching] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -58,6 +70,7 @@ export default function EarningsView({ onOpenTicker }: Props) {
       }
       setReports(d.reports ?? []);
       setUpcoming(d.upcoming ?? []);
+      setJustReported(d.justReported ?? []);
       setLastScan(d.lastScan ?? null);
     } catch (e) {
       setErr(String(e));
@@ -69,6 +82,31 @@ export default function EarningsView({ onOpenTicker }: Props) {
   useEffect(() => {
     load();
   }, [load]);
+
+  async function syncCalendar() {
+    setSyncing(true);
+    setMsg(null);
+    setErr(null);
+    try {
+      const r = await fetch('/api/earnings/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const text = await r.text();
+      const d = text ? JSON.parse(text) : {};
+      if (d.error) {
+        setErr(d.error);
+        return;
+      }
+      setMsg(`${d.saved} date caricate, dal ${d.from} al ${d.to}`);
+      await load();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   // Scarica i trimestri di un singolo titolo senza attendere la
   // costruzione dell'intero archivio
@@ -125,7 +163,7 @@ export default function EarningsView({ onOpenTicker }: Props) {
         <LastScan at={lastScan} staleAfterHours={480} />
 
         <div className="flex items-center gap-1 bg-brand-panel rounded p-0.5 w-fit">
-          {(['upcoming', 'past'] as const).map((t) => (
+          {(['upcoming', 'reported', 'past'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -135,10 +173,29 @@ export default function EarningsView({ onOpenTicker }: Props) {
                   : 'text-brand-muted hover:text-brand-text'
               }`}
             >
-              {t === 'upcoming' ? 'In arrivo' : 'Pubblicate'}
+              {t === 'upcoming'
+                ? 'In arrivo'
+                : t === 'reported'
+                  ? 'Appena uscite'
+                  : 'Storico'}
             </button>
           ))}
         </div>
+
+        <button
+          onClick={syncCalendar}
+          disabled={syncing}
+          className="btn-primary w-full py-2 text-xs disabled:opacity-50"
+        >
+          {syncing ? (
+            <span className="flex items-center justify-center gap-1.5">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Aggiorno il
+              calendario…
+            </span>
+          ) : (
+            'Aggiorna calendario'
+          )}
+        </button>
 
         <div className="flex items-center gap-2">
           <div className="relative flex-1 min-w-0">
@@ -196,68 +253,123 @@ export default function EarningsView({ onOpenTicker }: Props) {
       )}
 
       {tab === 'upcoming' && upcoming.length > 0 && (
-        <>
-          <div className="card p-3 border border-yellow-400/30 flex gap-2">
-            <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-brand-muted break-words">
-              <strong className="text-yellow-400">Date stimate.</strong> Le
-              date delle prossime trimestrali sono annunci aziendali e non
-              compaiono nei bilanci depositati. Queste sono ricavate dalla
-              cadenza dei depositi precedenti: servono a sapere se una
-              pubblicazione è vicina, non a segnarsela in agenda. Lo scarto
-              può essere di una o due settimane.
-            </p>
+        <div className="card overflow-hidden">
+          <div className="px-3 sm:px-4 py-2 bg-brand-panel/40 border-b border-brand-border">
+            <span className="text-xs font-semibold text-brand-muted uppercase tracking-wide">
+              Date annunciate dalle società
+            </span>
           </div>
-
-          <div className="card overflow-hidden">
-            <div className="divide-y divide-brand-border">
-              {upcoming.map((u) => {
-                const gg = daysTo(u.next_report_estimate);
-                const imminente = gg <= 10;
-                return (
-                  <button
-                    key={u.ticker}
-                    onClick={() => onOpenTicker(u.ticker)}
-                    className="w-full flex items-center gap-3 px-3 sm:px-4 py-3 hover:bg-brand-card/40 transition text-left"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline gap-2 flex-wrap">
-                        <span className="font-bold text-sm">{u.ticker}</span>
-                        {imminente && (
-                          <span className="tag bg-yellow-400/20 text-yellow-400 text-xs">
-                            imminente
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-brand-muted font-mono mt-0.5">
-                        ultimo bilancio {u.last_report_date ?? '—'}
-                        {u.cadence_days && (
-                          <> · ogni {Math.round(Number(u.cadence_days))} giorni</>
-                        )}
-                      </div>
+          <div className="divide-y divide-brand-border">
+            {upcoming.map((u) => {
+              const gg = daysTo(u.report_date);
+              const imminente = gg <= 7;
+              return (
+                <button
+                  key={u.id}
+                  onClick={() => onOpenTicker(u.ticker)}
+                  className="w-full flex items-center gap-3 px-3 sm:px-4 py-3 hover:bg-brand-card/40 transition text-left"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="font-bold text-sm">{u.ticker}</span>
+                      {imminente && (
+                        <span className="tag bg-yellow-400/20 text-yellow-400 text-xs">
+                          imminente
+                        </span>
+                      )}
+                      {u.timing && (
+                        <span className="text-xs text-brand-muted">
+                          {TIMING_LABEL[u.timing] ?? u.timing}
+                        </span>
+                      )}
                     </div>
+                    <div className="text-xs text-brand-muted truncate mt-0.5">
+                      {u.company_name ?? ''}
+                      {u.eps_estimate != null && (
+                        <> · atteso {Number(u.eps_estimate).toFixed(2)}</>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div
+                      className={`font-mono text-sm font-bold ${
+                        imminente ? 'text-yellow-400' : ''
+                      }`}
+                    >
+                      {new Date(u.report_date).toLocaleDateString('it-IT', {
+                        day: '2-digit',
+                        month: '2-digit',
+                      })}
+                    </div>
+                    <div className="text-[10px] text-brand-muted">
+                      {gg === 0
+                        ? 'oggi'
+                        : `fra ${gg} ${gg === 1 ? 'giorno' : 'giorni'}`}
+                    </div>
+                  </div>
+                  <ExternalLink className="w-3.5 h-3.5 text-brand-muted flex-shrink-0" />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {tab === 'reported' && justReported.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="px-3 sm:px-4 py-2 bg-brand-panel/40 border-b border-brand-border">
+            <span className="text-xs font-semibold text-brand-muted uppercase tracking-wide">
+              Pubblicate di recente · scarto rispetto alle attese
+            </span>
+          </div>
+          <div className="divide-y divide-brand-border">
+            {justReported.map((r) => {
+              const sur = r.surprise_pct != null ? Number(r.surprise_pct) : null;
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => onOpenTicker(r.ticker)}
+                  className="w-full flex items-center gap-3 px-3 sm:px-4 py-2.5 hover:bg-brand-card/40 transition text-left"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="font-bold text-sm">{r.ticker}</span>
+                      <span className="text-xs text-brand-muted">
+                        {new Date(r.report_date).toLocaleDateString('it-IT', {
+                          day: '2-digit',
+                          month: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                    <div className="text-xs text-brand-muted font-mono mt-0.5">
+                      {r.eps_actual != null && (
+                        <>pubblicato {Number(r.eps_actual).toFixed(2)}</>
+                      )}
+                      {r.eps_estimate != null && (
+                        <> · atteso {Number(r.eps_estimate).toFixed(2)}</>
+                      )}
+                    </div>
+                  </div>
+                  {sur != null && (
                     <div className="text-right flex-shrink-0">
                       <div
                         className={`font-mono text-sm font-bold ${
-                          imminente ? 'text-yellow-400' : ''
+                          sur >= 0 ? 'text-brand-up' : 'text-brand-down'
                         }`}
                       >
-                        {new Date(u.next_report_estimate).toLocaleDateString(
-                          'it-IT',
-                          { day: '2-digit', month: '2-digit' }
-                        )}
+                        {sur >= 0 ? '+' : ''}
+                        {sur.toFixed(1)}%
                       </div>
                       <div className="text-[10px] text-brand-muted">
-                        fra {gg} {gg === 1 ? 'giorno' : 'giorni'}
+                        sulle attese
                       </div>
                     </div>
-                    <ExternalLink className="w-3.5 h-3.5 text-brand-muted flex-shrink-0" />
-                  </button>
-                );
-              })}
-            </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
-        </>
+        </div>
       )}
 
       {tab === 'past' && reports.length > 0 && (
@@ -323,10 +435,10 @@ export default function EarningsView({ onOpenTicker }: Props) {
           Le date di deposito sono quelle reali.
         </p>
         <p className="break-words">
-          Le date in arrivo sono <strong>stime</strong>, ricavate dalla
-          cadenza dei depositi precedenti scartando gli intervalli anomali.
-          Per date confermate servirebbe una fonte esterna con chiave di
-          accesso.
+          Le date in arrivo sono quelle <strong>annunciate dalle
+          società</strong>, prese dal calendario di Yahoo. Accanto trovi
+          quando pubblicano — prima dell&apos;apertura o dopo la chiusura —
+          e l&apos;utile atteso dagli analisti.
         </p>
         <p className="break-words">
           Utile soprattutto per un motivo: un segnale tecnico a pochi giorni

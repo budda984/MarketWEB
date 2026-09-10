@@ -43,14 +43,41 @@ export async function GET(req: Request) {
       );
     }
 
-    // Attese: solo stime future, dalla piu' vicina
     const today = new Date().toISOString().slice(0, 10);
-    const { data: upcoming } = await supabase
-      .from('valuations')
-      .select('ticker, next_report_estimate, cadence_days, last_report_date')
-      .not('next_report_estimate', 'is', null)
-      .gte('next_report_estimate', today)
-      .order('next_report_estimate', { ascending: true })
+
+    // Date reali dal calendario. Se l'archivio e' vuoto si ripiega sulle
+    // stime, ma il client deve sapere quale delle due sta guardando.
+    const { data: calendar } = await supabase
+      .from('earnings_calendar')
+      .select('*')
+      .gte('event_date', today)
+      .order('event_date', { ascending: true })
+      .limit(120);
+
+    let upcoming: Array<Record<string, unknown>> = [];
+    let upcomingSource: 'calendar' | 'estimate' = 'calendar';
+
+    if (calendar && calendar.length > 0) {
+      upcoming = calendar;
+    } else {
+      upcomingSource = 'estimate';
+      const { data: est } = await supabase
+        .from('valuations')
+        .select('ticker, next_report_estimate, cadence_days, last_report_date')
+        .not('next_report_estimate', 'is', null)
+        .gte('next_report_estimate', today)
+        .order('next_report_estimate', { ascending: true })
+        .limit(60);
+      upcoming = est ?? [];
+    }
+
+    // Risultati appena pubblicati, con il confronto sulle attese
+    const { data: justReported } = await supabase
+      .from('earnings_calendar')
+      .select('*')
+      .lt('event_date', today)
+      .not('eps_actual', 'is', null)
+      .order('event_date', { ascending: false })
       .limit(60);
 
     const { data: lastRow } = await supabase
@@ -60,10 +87,20 @@ export async function GET(req: Request) {
       .limit(1)
       .maybeSingle();
 
+    const { data: calLast } = await supabase
+      .from('earnings_calendar')
+      .select('updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
     return NextResponse.json({
       reports: reports ?? [],
-      upcoming: upcoming ?? [],
+      upcoming,
+      upcomingSource,
+      justReported: justReported ?? [],
       lastScan: lastRow?.updated_at ?? null,
+      calendarLastScan: calLast?.updated_at ?? null,
     });
   } catch (e) {
     return NextResponse.json(
