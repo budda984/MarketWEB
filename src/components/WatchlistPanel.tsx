@@ -12,6 +12,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import type { DbWatchlist } from '@/types/db';
+import TickerSearch from './TickerSearch';
 
 type Props = {
   watchlists: DbWatchlist[];
@@ -227,19 +228,10 @@ function WatchlistItem({
 }) {
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(watchlist.name);
-  const [newTicker, setNewTicker] = useState('');
 
-  function addTickers() {
-    const raw = newTicker.trim();
-    if (!raw) return;
-    // Accetta separatori virgola, spazio, newline
-    const parts = raw
-      .split(/[\s,;]+/)
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
+  function addTickers(parts: string[]) {
     const merged = Array.from(new Set([...watchlist.tickers, ...parts]));
     onUpdateTickers(merged);
-    setNewTicker('');
   }
 
   function removeTicker(t: string) {
@@ -322,27 +314,16 @@ function WatchlistItem({
       {/* Contenuto espanso: ticker + aggiungi */}
       {expanded && (
         <div className="px-2 pb-2 space-y-1">
-          {/* Input aggiungi ticker */}
-          <div className="flex gap-1">
-            <input
-              type="text"
-              value={newTicker}
-              onChange={(e) => setNewTicker(e.target.value.toUpperCase())}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') addTickers();
-              }}
-              placeholder="AAPL, BTC-USD…"
-              className="input flex-1 text-xs py-1 font-mono"
-              autoCapitalize="characters"
-            />
-            <button
-              onClick={addTickers}
-              disabled={!newTicker.trim()}
-              className="btn-primary py-1 px-2 text-xs disabled:opacity-50"
-            >
-              <Plus className="w-3 h-3" />
-            </button>
-          </div>
+          {/* Aggiungi titoli: ricerca per nome o simbolo, oppure piu'
+              simboli separati da virgola */}
+          <TickerSearch
+            compact
+            clearOnSelect
+            placeholder="Nome o simbolo…"
+            submitLabel={<Plus className="w-3 h-3" />}
+            onSelect={(t) => addTickers([t])}
+            onSubmitList={addTickers}
+          />
 
           {/* Lista ticker */}
           {watchlist.tickers.length === 0 ? (

@@ -276,7 +276,14 @@ export async function GET(req: Request) {
   // ============================================================
   // Valutazione alert di prezzo (logica condivisa con lo scan manuale)
   // ============================================================
-  const alertResult = await evaluateAlerts(admin, currentPrices);
+  // fillMissing: anche i titoli con avvisi fuori dall'universo, o dei
+  // mercati saltati per tempo, vengono controllati
+  // Il tempo concesso e' quello che resta prima dei 50 secondi, per
+  // lasciare margine a regole automatiche e Telegram.
+  const alertResult = await evaluateAlerts(admin, currentPrices, undefined, {
+    fillMissing: true,
+    fillBudgetMs: 50_000 - (Date.now() - t0),
+  });
   const alertsByUser = alertResult.byUser;
 
   // ============================================================

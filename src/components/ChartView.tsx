@@ -16,8 +16,8 @@ import {
 } from 'lucide-react';
 import { hma, heikinAshi } from '@/lib/indicators';
 import type { OHLCV } from '@/lib/yahoo';
-import { MARKETS, type MarketKey, ALL_TICKERS, getMarketForTicker } from '@/lib/tickers';
-import { localSearch } from '@/lib/ticker-names';
+import { MARKETS, type MarketKey } from '@/lib/tickers';
+import TickerSearch from './TickerSearch';
 import AlertsPanel from './AlertsPanel';
 import AddToWatchlistButton from './AddToWatchlistButton';
 import LightweightChart, {
@@ -198,7 +198,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
         <div className="flex items-center gap-2 flex-1">
           <Search className="w-4 h-4 text-brand-muted flex-shrink-0" />
           {onTickerChange ? (
-            <InlineSearch defaultValue={ticker} onChange={onTickerChange} />
+            <TickerSearch defaultValue={ticker} onSelect={onTickerChange} />
           ) : (
             <span className="font-mono font-bold">{ticker}</span>
           )}
@@ -401,136 +401,6 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
         </>
       )}
     </div>
-  );
-}
-
-type SearchSuggestion = {
-  ticker: string;
-  name: string;
-  exchange?: string;
-  type?: string;
-};
-
-function InlineSearch({
-  defaultValue,
-  onChange,
-}: {
-  defaultValue: string;
-  onChange: (s: string) => void;
-}) {
-  const [v, setV] = useState(defaultValue);
-  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
-  const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState(-1);
-
-  useEffect(() => setV(defaultValue), [defaultValue]);
-
-  // Ricerca locale: zero fetch, istantanea. Cerca sia nel ticker che nel nome
-  // dai ticker presenti nel sistema (via TICKER_NAMES).
-  useEffect(() => {
-    const q = v.trim();
-    if (q.length < 1 || q.toUpperCase() === defaultValue.toUpperCase()) {
-      setSuggestions([]);
-      setOpen(false);
-      return;
-    }
-    const results = localSearch(q, ALL_TICKERS, 10);
-    const mapped = results.map((r) => ({
-      ticker: r.ticker,
-      name: r.name,
-      exchange: undefined,
-      type: undefined,
-    }));
-    setSuggestions(mapped);
-    setOpen(mapped.length > 0);
-  }, [v, defaultValue]);
-
-  function pick(ticker: string) {
-    setV(ticker);
-    setOpen(false);
-    setSuggestions([]);
-    setHighlight(-1);
-    onChange(ticker.toUpperCase());
-  }
-
-  function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (!open || suggestions.length === 0) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setHighlight((h) => Math.min(h + 1, suggestions.length - 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHighlight((h) => Math.max(h - 1, 0));
-    } else if (e.key === 'Enter' && highlight >= 0) {
-      e.preventDefault();
-      pick(suggestions[highlight].ticker);
-    } else if (e.key === 'Escape') {
-      setOpen(false);
-    }
-  }
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onChange(v.toUpperCase());
-        setOpen(false);
-      }}
-      className="flex items-center gap-2 flex-1 relative"
-    >
-      <div className="flex-1 min-w-0 relative">
-        <input
-          type="text"
-          value={v}
-          onChange={(e) => {
-            setV(e.target.value);
-            setHighlight(-1);
-          }}
-          onFocus={() => suggestions.length > 0 && setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 200)}
-          onKeyDown={handleKey}
-          placeholder="AAPL, Apple, BTC…"
-          className="input w-full font-mono"
-          autoCapitalize="off"
-          autoComplete="off"
-        />
-        {open && suggestions.length > 0 && (
-          <div className="absolute top-full left-0 right-0 mt-1 bg-brand-panel border border-brand-border rounded-md shadow-lg z-30 max-h-72 overflow-y-auto">
-            {suggestions.map((s, i) => (
-              <button
-                key={s.ticker + i}
-                type="button"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  pick(s.ticker);
-                }}
-                onMouseEnter={() => setHighlight(i)}
-                className={`w-full text-left px-3 py-2 border-b border-brand-border last:border-b-0 transition ${
-                  highlight === i
-                    ? 'bg-brand-green/15'
-                    : 'hover:bg-brand-card/60'
-                }`}
-              >
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-mono font-bold text-sm">
-                    {s.ticker}
-                  </span>
-                  <span className="text-xs text-brand-muted">
-                    {getMarketForTicker(s.ticker) ?? ''}
-                  </span>
-                </div>
-                <div className="text-xs text-brand-muted truncate">
-                  {s.name}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <button type="submit" className="btn-ghost flex-shrink-0 text-xs">
-        Apri
-      </button>
-    </form>
   );
 }
 

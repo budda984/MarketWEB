@@ -100,7 +100,11 @@ export async function yahooQuote(ticker: string, timeoutMs = 10000) {
       previousClose: prev,
       changePct: ((price - prev) / prev) * 100,
       currency: meta.currency,
-      exchange: meta.exchangeName,
+      exchange: meta.fullExchangeName ?? meta.exchangeName,
+      // Il grafico riporta anche il nome: serve per i titoli fuori
+      // dall'universo, che non sono nel dizionario locale.
+      longName: meta.longName,
+      shortName: meta.shortName,
     };
   } catch {
     return null;
@@ -149,6 +153,10 @@ type YahooChartResponse = {
       meta: {
         currency?: string;
         exchangeName?: string;
+        fullExchangeName?: string;
+        longName?: string;
+        shortName?: string;
+        instrumentType?: string;
         regularMarketPrice?: number;
         previousClose?: number;
         chartPreviousClose?: number;
@@ -206,7 +214,11 @@ export async function yahooQuoteFull(
 
   // Import dinamico per evitare circular deps (ticker-names è side-effect free).
   const { TICKER_NAMES } = await import('./ticker-names');
-  const longName = TICKER_NAMES[ticker] ?? TICKER_NAMES[ticker.toUpperCase()];
+  const longName =
+    TICKER_NAMES[ticker] ??
+    TICKER_NAMES[ticker.toUpperCase()] ??
+    base.longName ??
+    base.shortName;
 
   return {
     ...base,
@@ -438,16 +450,37 @@ type YahooSession = { cookie: string; crumb: string; at: number };
 let sessionCache: YahooSession | null = null;
 const SESSION_TTL_MS = 30 * 60 * 1000;
 
+// Richiesta di sessione in corso: le chiamate che arrivano nel frattempo
+// aspettano questa invece di aprirne un'altra. Senza, una pagina che
+// lancia dieci richieste insieme a freddo farebbe dieci giri cookie+crumb.
+let sessionInFlight: Promise<YahooSession | null> | null = null;
+
+// Dopo un fallimento si aspetta un po' prima di riprovare, per non
+// martellare Yahoo quando il problema non si risolve da solo.
+let sessionFailedAt = 0;
+const SESSION_RETRY_PAUSE_MS = 30 * 1000;
+
+const BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
 export async function getYahooSession(
   force = false
 ): Promise<YahooSession | null> {
   if (!force && sessionCache && Date.now() - sessionCache.at < SESSION_TTL_MS) {
     return sessionCache;
   }
+  if (sessionInFlight) return sessionInFlight;
+  if (!force && Date.now() - sessionFailedAt < SESSION_RETRY_PAUSE_MS) {
+    return null;
+  }
 
-  const browserUA =
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  sessionInFlight = createYahooSession().finally(() => {
+    sessionInFlight = null;
+  });
+  return sessionInFlight;
+}
 
+async function createYahooSession(): Promise<YahooSession | null> {
   try {
     // 1. Cookie. fc.yahoo.com risponde spesso con un errore, ma i
     //    cookie li imposta lo stesso: quello che conta e' l'intestazione.
@@ -458,7 +491,7 @@ export async function getYahooSession(
     ]) {
       try {
         const res = await fetch(seed, {
-          headers: { 'User-Agent': browserUA },
+          headers: { 'User-Agent': BROWSER_UA },
           redirect: 'follow',
           signal: AbortSignal.timeout(8000),
         });
@@ -474,27 +507,38 @@ export async function getYahooSession(
         // il prossimo dominio
       }
     }
-    if (!cookie) return null;
+    if (!cookie) {
+      sessionFailedAt = Date.now();
+      return null;
+    }
 
     // 2. Crumb, presentando il cookie appena ottenuto
     const crumbRes = await fetch(
       'https://query2.finance.yahoo.com/v1/test/getcrumb',
       {
         headers: {
-          'User-Agent': browserUA,
+          'User-Agent': BROWSER_UA,
           Accept: 'text/plain, */*',
           Cookie: cookie,
         },
         signal: AbortSignal.timeout(8000),
       }
     );
-    if (!crumbRes.ok) return null;
+    if (!crumbRes.ok) {
+      sessionFailedAt = Date.now();
+      return null;
+    }
     const crumb = (await crumbRes.text()).trim();
-    if (!crumb || crumb.length > 40 || crumb.includes('<')) return null;
+    if (!crumb || crumb.length > 40 || crumb.includes('<')) {
+      sessionFailedAt = Date.now();
+      return null;
+    }
 
     sessionCache = { cookie, crumb, at: Date.now() };
+    sessionFailedAt = 0;
     return sessionCache;
   } catch {
+    sessionFailedAt = Date.now();
     return null;
   }
 }
@@ -509,17 +553,15 @@ export async function yahooAuthedFetch(
   init: RequestInit = {},
   timeoutMs = 12000
 ): Promise<Response | null> {
-  const browserUA =
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  let session = await getYahooSession();
+  if (!session) return null;
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const session = await getYahooSession(attempt > 0);
-    if (!session) return null;
     try {
       const res = await fetch(buildUrl(session.crumb), {
         ...init,
         headers: {
-          'User-Agent': browserUA,
+          'User-Agent': BROWSER_UA,
           Accept: 'application/json',
           Cookie: session.cookie,
           ...(init.headers ?? {}),
@@ -528,7 +570,13 @@ export async function yahooAuthedFetch(
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (res.status === 401 && attempt === 0) {
-        sessionCache = null; // crumb scaduto: rinnovo e riprovo
+        // Crumb scaduto. Si butta la sessione solo se e' ancora quella
+        // usata: se un'altra richiesta l'ha gia' rinnovata, si riusa la
+        // nuova invece di rifarla.
+        if (sessionCache === session) sessionCache = null;
+        const next = await getYahooSession(sessionCache == null);
+        if (!next) return null;
+        session = next;
         continue;
       }
       return res;
@@ -537,6 +585,94 @@ export async function yahooAuthedFetch(
     }
   }
   return null;
+}
+
+// ============================================================================
+// RICERCA DEI TITOLI
+// ============================================================================
+
+/**
+ * Ricerca per nome o simbolo su tutto il catalogo Yahoo, non solo sui
+ * titoli dell'universo. E' la stessa che alimenta la casella di ricerca
+ * del sito Yahoo, e dai datacenter funziona solo con la sessione.
+ */
+export type YahooSearchResult = {
+  symbol: string;
+  name: string;
+  /** Codice breve della borsa (NMS, MIL, GER...) */
+  exchange: string | null;
+  /** Nome leggibile della borsa (NASDAQ, Milan, XETRA...) */
+  exchangeName: string | null;
+  /** EQUITY, ETF, INDEX, CRYPTOCURRENCY, CURRENCY, FUTURE, MUTUALFUND */
+  type: string | null;
+  sector: string | null;
+  industry: string | null;
+};
+
+// Opzioni e simili non hanno un grafico utile: si scartano.
+const SEARCH_TYPES_EXCLUDED = new Set(['OPTION', 'MONEYMARKET']);
+
+export async function yahooSearch(
+  query: string,
+  count = 10
+): Promise<YahooSearchResult[] | null> {
+  const q = query.trim();
+  if (!q) return [];
+
+  const res = await yahooAuthedFetch(
+    (crumb) =>
+      `https://query2.finance.yahoo.com/v1/finance/search` +
+      `?q=${encodeURIComponent(q)}` +
+      `&quotesCount=${count}&newsCount=0&listsCount=0` +
+      `&enableFuzzyQuery=false&quotesQueryId=tss_match_phrase_query` +
+      `&lang=en-US&region=US&crumb=${encodeURIComponent(crumb)}`,
+    {},
+    8000
+  );
+  if (!res || !res.ok) return null;
+
+  try {
+    const json = (await res.json()) as {
+      quotes?: Array<{
+        symbol?: string;
+        shortname?: string;
+        longname?: string;
+        exchange?: string;
+        exchDisp?: string;
+        quoteType?: string;
+        sector?: string;
+        sectorDisp?: string;
+        industry?: string;
+        industryDisp?: string;
+        isYahooFinance?: boolean;
+      }>;
+    };
+
+    const out: YahooSearchResult[] = [];
+    const seen = new Set<string>();
+    for (const r of json.quotes ?? []) {
+      // Nella lista possono comparire voci che non sono titoli
+      // (pagine, persone): si tengono solo quelle con un simbolo.
+      if (!r.symbol || r.isYahooFinance === false) continue;
+      const type = r.quoteType?.toUpperCase() ?? null;
+      if (type && SEARCH_TYPES_EXCLUDED.has(type)) continue;
+      const symbol = r.symbol.toUpperCase();
+      if (seen.has(symbol)) continue;
+      seen.add(symbol);
+      out.push({
+        symbol,
+        name: r.longname || r.shortname || symbol,
+        exchange: r.exchange ?? null,
+        exchangeName: r.exchDisp ?? null,
+        type,
+        sector: r.sectorDisp ?? r.sector ?? null,
+        industry: r.industryDisp ?? r.industry ?? null,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================

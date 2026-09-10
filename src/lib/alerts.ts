@@ -9,6 +9,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { yahooQuote } from './yahoo';
 
 export type TriggeredAlert = {
   userId: string;
@@ -34,11 +35,16 @@ export type AlertEvaluationResult = {
  * @param currentPrices Mappa ticker → prezzo corrente
  * @param userIdFilter Se fornito, limita il check agli alert di quel
  *                     singolo utente (usato dallo scan manuale)
+ * @param opts.fillMissing Scarica il prezzo dei titoli con avvisi attivi
+ *                     che non sono tra i prezzi forniti: titoli fuori
+ *                     dall'universo aggiunti con la ricerca, o mercati
+ *                     saltati per tempo. Lo usa il cron.
  */
 export async function evaluateAlerts(
   admin: SupabaseClient,
   currentPrices: Map<string, number>,
-  userIdFilter?: string
+  userIdFilter?: string,
+  opts: { fillMissing?: boolean; fillBudgetMs?: number } = {}
 ): Promise<AlertEvaluationResult> {
   const byUser = new Map<string, TriggeredAlert[]>();
   let triggered = 0;
@@ -51,6 +57,17 @@ export async function evaluateAlerts(
   const { data: activeAlerts, error } = await query;
   if (error || !activeAlerts || activeAlerts.length === 0) {
     return { checked: 0, triggered: 0, byUser };
+  }
+
+  if (opts.fillMissing) {
+    const missing = Array.from(
+      new Set(
+        activeAlerts
+          .map((a) => a.ticker as string)
+          .filter((t) => !currentPrices.has(t))
+      )
+    );
+    await fillMissingPrices(missing, currentPrices, opts.fillBudgetMs ?? 8000);
   }
 
   const alertUpdates: Array<{
@@ -121,4 +138,38 @@ export async function evaluateAlerts(
   }
 
   return { checked, triggered, byUser };
+}
+
+/**
+ * Completa la mappa dei prezzi con i titoli che mancano.
+ *
+ * Limiti stretti perche' gira in coda al cron, che ha gia' consumato
+ * gran parte dei suoi 60 secondi: al massimo MAX_TICKERS titoli e il
+ * tempo che il chiamante concede (mai piu' di 8 secondi). Quelli rimasti
+ * fuori verranno controllati al giro successivo.
+ */
+async function fillMissingPrices(
+  tickers: string[],
+  prices: Map<string, number>,
+  budgetMs: number
+): Promise<void> {
+  const MAX_TICKERS = 80;
+  const TIME_BUDGET_MS = Math.min(budgetMs, 8000);
+  const CONCURRENCY = 8;
+
+  const list = tickers.slice(0, MAX_TICKERS);
+  if (list.length === 0 || TIME_BUDGET_MS < 1000) return;
+
+  const t0 = Date.now();
+  let idx = 0;
+  async function worker() {
+    while (idx < list.length && Date.now() - t0 < TIME_BUDGET_MS) {
+      const t = list[idx++];
+      const q = await yahooQuote(t, 5000);
+      if (q && Number.isFinite(q.price)) prices.set(t, q.price);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, list.length) }, worker)
+  );
 }
