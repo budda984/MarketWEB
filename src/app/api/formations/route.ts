@@ -58,9 +58,22 @@ export async function POST(req: Request) {
     if (found.length > 0) {
       const admin = createAdminClient();
       const now = new Date().toISOString();
+
+      // Stati precedenti, per datare correttamente i cambiamenti
+      const { data: previous } = await admin
+        .from('formations')
+        .select('ticker, kind, state, state_changed_at');
+      const prevState = new Map<string, string>();
+      const prevChanged = new Map<string, string | null>();
+      for (const p of previous ?? []) {
+        prevState.set(`${p.ticker}|${p.kind}`, p.state);
+        prevChanged.set(`${p.ticker}|${p.kind}`, p.state_changed_at);
+      }
       const seen = new Map<string, Record<string, unknown>>();
       for (const f of found) {
-        seen.set(`${f.ticker}|${f.kind}`, {
+        const key = `${f.ticker}|${f.kind}`;
+        const before = prevState.get(key);
+        seen.set(key, {
           ticker: f.ticker,
           kind: f.kind,
           state: f.state,
@@ -74,6 +87,8 @@ export async function POST(req: Request) {
           market: f.market,
           last_seen: now,
           first_state: f.state,
+          state_changed_at:
+            before && before === f.state ? (prevChanged.get(key) ?? now) : now,
         });
       }
       const { error } = await admin

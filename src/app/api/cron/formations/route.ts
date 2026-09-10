@@ -39,10 +39,12 @@ export async function GET(req: Request) {
     // ogni sera si rinotificherebbe la stessa rottura.
     const { data: previous } = await admin
       .from('formations')
-      .select('ticker, kind, state');
+      .select('ticker, kind, state, state_changed_at');
     const prevState = new Map<string, string>();
+    const prevChanged = new Map<string, string | null>();
     for (const p of previous ?? []) {
       prevState.set(`${p.ticker}|${p.kind}`, p.state);
+      prevChanged.set(`${p.ticker}|${p.kind}`, p.state_changed_at);
     }
 
     let found = 0;
@@ -92,6 +94,13 @@ export async function GET(req: Request) {
             market: getMarketForTicker(ticker),
             last_seen: now,
             first_state: f.state,
+            // La data del cambio si aggiorna solo quando lo stato cambia
+            // davvero: altrimenti una figura ferma da settimane
+            // risulterebbe sempre la piu' recente
+            state_changed_at:
+              before && before === f.state
+                ? (prevChanged.get(key) ?? now)
+                : now,
           });
         }
       }

@@ -12,7 +12,6 @@ import LastScan from './LastScan';
 import {
   FORMATION_LABELS,
   FORMATION_DIRECTION,
-  stateLabel,
   type FormationKind,
   type FormationState,
 } from '@/lib/formations';
@@ -32,12 +31,7 @@ type Formation = {
   market: string | null;
   points: Array<{ time: number; price: number; label: string }>;
   firstSeen?: string;
-};
-
-const STATE_STYLE: Record<FormationState, string> = {
-  forming: 'bg-brand-panel text-brand-muted',
-  right_shoulder: 'bg-yellow-400/20 text-yellow-400',
-  confirmed: 'bg-brand-green/20 text-brand-green',
+  stateChangedAt?: string;
 };
 
 type Props = { onOpenTicker: (t: string) => void };
@@ -79,6 +73,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
           market: (f.market as string) ?? null,
           points: (f.points as Formation['points']) ?? [],
           firstSeen: f.first_seen as string,
+          stateChangedAt: (f.state_changed_at ?? f.first_seen) as string,
         })
       );
       setItems(stored);
@@ -134,25 +129,42 @@ export default function FormationsView({ onOpenTicker }: Props) {
     }
   }
 
-  const visible = items
+  const filtered = items
     .filter((f) => (kindFilter === 'all' ? true : f.kind === kindFilter))
     .filter((f) => (stateFilter === 'all' ? true : f.state === stateFilter))
     .filter((f) =>
       dirFilter === 'all'
         ? true
         : (f.direction ?? FORMATION_DIRECTION[f.kind]) === dirFilter
-    )
-    .sort((a, b) => {
-      // Prima le piu' avanzate, poi le piu' vicine alla conferma
-      const order: Record<FormationState, number> = {
-        confirmed: 0,
-        right_shoulder: 1,
-        forming: 2,
-      };
-      const d = order[a.state] - order[b.state];
-      if (d !== 0) return d;
-      return a.distanceToNecklinePct - b.distanceToNecklinePct;
-    });
+    );
+
+  // Dentro ogni gruppo, dalla piu' recente: la data che conta e' quella
+  // del cambio di stato, non quella del primo avvistamento. Una figura
+  // rotta ieri va sopra a una comparsa ieri ma ancora in formazione.
+  const byRecency = (a: Formation, b: Formation) =>
+    (b.stateChangedAt ?? b.firstSeen ?? '').localeCompare(
+      a.stateChangedAt ?? a.firstSeen ?? ''
+    );
+
+  const groups = ([
+    {
+      state: 'confirmed' as FormationState,
+      rows: filtered.filter((f) => f.state === 'confirmed').sort(byRecency),
+    },
+    {
+      state: 'right_shoulder' as FormationState,
+      rows: filtered
+        .filter((f) => f.state === 'right_shoulder')
+        .sort(byRecency),
+    },
+    {
+      state: 'forming' as FormationState,
+      rows: filtered.filter((f) => f.state === 'forming').sort(byRecency),
+    },
+  ] satisfies Array<{ state: FormationState; rows: Formation[] }>).filter(
+    (g) => g.rows.length > 0
+  );
+
 
   const counts = {
     confirmed: items.filter((f) => f.state === 'confirmed').length,
@@ -291,10 +303,38 @@ export default function FormationsView({ onOpenTicker }: Props) {
         </div>
       )}
 
-      {visible.length > 0 && (
-        <div className="card overflow-hidden">
+      {groups.map((group) => (
+        <div key={group.state} className="card overflow-hidden">
+          <div
+            className={`px-3 sm:px-4 py-2 border-b border-brand-border ${
+              group.state === 'confirmed'
+                ? 'bg-brand-green/10'
+                : group.state === 'right_shoulder'
+                  ? 'bg-yellow-400/10'
+                  : 'bg-brand-panel/40'
+            }`}
+          >
+            <span
+              className={`text-xs font-semibold uppercase tracking-wide ${
+                group.state === 'confirmed'
+                  ? 'text-brand-green'
+                  : group.state === 'right_shoulder'
+                    ? 'text-yellow-400'
+                    : 'text-brand-muted'
+              }`}
+            >
+              {group.state === 'confirmed'
+                ? 'Rottura confermata'
+                : group.state === 'right_shoulder'
+                  ? 'Struttura completata'
+                  : 'In formazione'}
+            </span>
+            <span className="text-xs text-brand-muted ml-2">
+              {group.rows.length}
+            </span>
+          </div>
           <div className="divide-y divide-brand-border">
-            {visible.map((f, i) => (
+            {group.rows.map((f, i) => (
               <button
                 key={`${f.ticker}-${f.kind}-${i}`}
                 onClick={() => onOpenTicker(f.ticker)}
@@ -303,9 +343,6 @@ export default function FormationsView({ onOpenTicker }: Props) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline gap-2 flex-wrap">
                     <span className="font-bold text-sm">{f.ticker}</span>
-                    <span className={`tag text-xs ${STATE_STYLE[f.state]}`}>
-                      {stateLabel(f.kind, f.state)}
-                    </span>
                     <span className="text-xs text-brand-muted">
                       {FORMATION_LABELS[f.kind]}
                     </span>
@@ -335,11 +372,13 @@ export default function FormationsView({ onOpenTicker }: Props) {
                       </>
                     )}{' '}
                     · {f.barsSpan} sedute
-                    {f.firstSeen && (
+                    {(f.stateChangedAt ?? f.firstSeen) && (
                       <>
                         {' '}
-                        · vista dal{' '}
-                        {new Date(f.firstSeen).toLocaleDateString('it-IT', {
+                        ·{' '}
+                        {new Date(
+                          f.stateChangedAt ?? f.firstSeen!
+                        ).toLocaleDateString('it-IT', {
                           day: '2-digit',
                           month: '2-digit',
                         })}
@@ -358,7 +397,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
             ))}
           </div>
         </div>
-      )}
+      ))}
 
       <div className="card p-3 text-xs text-brand-muted space-y-1.5">
         <div className="flex items-center gap-1.5 font-semibold">
