@@ -596,19 +596,19 @@ function formatPatternDigest(
   const lines: string[] = ['*🎯 Pattern Radar*\n'];
 
   if (breakouts.length > 0) {
-    lines.push(`🚨 *BREAKOUT* (${breakouts.length})`);
+    lines.push(`🚨 <b>BREAKOUT</b> (${breakouts.length})`);
     for (const p of breakouts.slice(0, 20)) {
       const tgt = p.target != null ? ` → $${p.target.toFixed(2)}` : '';
-      lines.push(`  ${p.icon} \`${p.ticker}\` ${p.name} @ $${p.price.toFixed(2)}${tgt}`);
+      lines.push(`  ${p.icon} <code>${p.ticker}</code> ${p.name} @ $${p.price.toFixed(2)}${tgt}`);
     }
     lines.push('');
   }
 
   if (forming.length > 0) {
-    lines.push(`⏳ *In attesa* (${forming.length})`);
+    lines.push(`⏳ <b>In attesa</b> (${forming.length})`);
     for (const p of forming.slice(0, 15)) {
       lines.push(
-        `  ${p.icon} \`${p.ticker}\` ${p.name} lvl $${p.level.toFixed(2)} (${(p.conf * 100).toFixed(0)}%)`
+        `  ${p.icon} <code>${p.ticker}</code> ${p.name} lvl $${p.level.toFixed(2)} (${(p.conf * 100).toFixed(0)}%)`
       );
     }
   }
@@ -626,7 +626,7 @@ function formatAlertDigest(
     note: string | null;
   }>
 ): string {
-  const lines: string[] = ['🚨 *AVVISI DI PREZZO*\n'];
+  const lines: string[] = ['🚨 <b>AVVISI DI PREZZO</b>\n'];
   for (const a of triggered) {
     const arrow =
       a.previousPrice != null && a.currentPrice > a.previousPrice
@@ -638,7 +638,7 @@ function formatAlertDigest(
       a.direction === 'above' ? '↑' : a.direction === 'below' ? '↓' : '⇅';
     const noteStr = a.note ? ` _(${a.note})_` : '';
     lines.push(
-      `  ${arrow} \`${a.ticker}\` ${dirIcon} soglia $${a.threshold.toFixed(2)} → prezzo $${a.currentPrice.toFixed(2)}${noteStr}`
+      `  ${arrow} <code>${a.ticker}</code> ${dirIcon} soglia $${a.threshold.toFixed(2)} → prezzo $${a.currentPrice.toFixed(2)}${noteStr}`
     );
   }
   return lines.join('\n');

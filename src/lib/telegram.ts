@@ -23,7 +23,9 @@ export async function sendTelegramMessage(msg: TelegramMessage): Promise<boolean
       body: JSON.stringify({
         chat_id: msg.chatId,
         text: msg.text,
-        parse_mode: msg.parseMode ?? 'Markdown',
+        // HTML e' il formato usato da tutti i messaggi: con Markdown i
+        // tag venivano mostrati come testo
+        parse_mode: msg.parseMode ?? 'HTML',
         disable_notification: msg.disableNotification ?? false,
         disable_web_page_preview: true,
       }),
@@ -48,29 +50,29 @@ export function formatSignalsDigest(
   }>
 ): string {
   if (signals.length === 0) {
-    return '*📉 Market Monitor*\n\n_Nessun segnale rilevato._';
+    return '📉 <b>Market Monitor</b>\n\n<i>Nessun segnale rilevato.</i>';
   }
 
   const forti = signals.filter((s) => s.strength === 3);
   const medi = signals.filter((s) => s.strength === 2);
   const deboli = signals.filter((s) => s.strength === 1);
 
-  const lines: string[] = ['*📈 Market Monitor — Segnali*\n'];
+  const lines: string[] = ['📈 <b>Market Monitor — Segnali</b>\n'];
 
   if (forti.length > 0) {
-    lines.push(`🔥 *FORTI* (${forti.length})`);
+    lines.push(`🔥 <b>FORTI</b> (${forti.length})`);
     for (const s of forti.slice(0, 15)) {
       lines.push(
-        `  \`${s.ticker}\` $${s.price.toFixed(2)} ${fmtChg(s.changePct)} — ${escMd(s.details)}`
+        `  <code>${s.ticker}</code> $${s.price.toFixed(2)} ${fmtChg(s.changePct)} — ${escHtml(s.details)}`
       );
     }
     lines.push('');
   }
   if (medi.length > 0) {
-    lines.push(`⚠️ *MEDI* (${medi.length})`);
+    lines.push(`⚠️ <b>MEDI</b> (${medi.length})`);
     for (const s of medi.slice(0, 10)) {
       lines.push(
-        `  \`${s.ticker}\` $${s.price.toFixed(2)} ${fmtChg(s.changePct)}`
+        `  <code>${s.ticker}</code> $${s.price.toFixed(2)} ${fmtChg(s.changePct)}`
       );
     }
     lines.push('');
@@ -87,7 +89,13 @@ function fmtChg(pct: number): string {
   return `${sign}${pct.toFixed(2)}%`;
 }
 
-function escMd(text: string): string {
-  // Non usare caratteri Markdown speciali nei dettagli
-  return text.replace(/[_*`[\]]/g, '');
+/**
+ * I caratteri < > & vanno neutralizzati, altrimenti Telegram interpreta
+ * come tag un frammento di testo qualsiasi e rifiuta l'intero messaggio.
+ */
+function escHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
