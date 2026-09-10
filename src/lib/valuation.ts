@@ -26,6 +26,8 @@ export function sleep(ms: number) {
 type ConceptFact = {
   end: string;
   val: number;
+  /** Data di deposito effettiva: e' quella che serve per il calendario */
+  filed?: string;
   fy?: number;
   fp?: string;
   form?: string;
@@ -107,8 +109,23 @@ function ttmAt(series: ConceptFact[], asOf: string): number | null {
   return Number.isFinite(sum) ? sum : null;
 }
 
+/** Un trimestre pubblicato, con la data di deposito effettiva. */
+export type QuarterReport = {
+  periodEnd: string;
+  filedDate: string | null;
+  eps: number | null;
+  revenue: number | null;
+  form: string | null;
+};
+
 export type Fundamentals = {
   ticker: string;
+  /** Ultimi trimestri pubblicati, dal piu' recente */
+  reports: QuarterReport[];
+  /** Data attesa del prossimo deposito, stimata dalla cadenza storica */
+  nextReportEstimate: string | null;
+  /** Giorni mediani fra un deposito e il successivo */
+  cadenceDays: number | null;
   ttmEps: number | null;
   ttmEpsYearAgo: number | null;
   ttmRevenue: number | null;
@@ -191,6 +208,55 @@ export async function fetchFundamentals(
 
   const price = candles.length > 0 ? candles[candles.length - 1].c : null;
 
+  // --- Storico dei trimestri e stima del prossimo -------------------
+  const revByEnd = new Map<string, number>();
+  for (const r of rev) revByEnd.set(r.end, r.val);
+
+  const reports: QuarterReport[] = eps
+    .slice(-8)
+    .reverse()
+    .map((q) => ({
+      periodEnd: q.end,
+      filedDate: q.filed ?? null,
+      eps: q.val,
+      revenue: revByEnd.get(q.end) ?? null,
+      form: q.form ?? null,
+    }));
+
+  // La stima nasce dalla cadenza dei depositi: le societa' pubblicano a
+  // intervalli regolari, quindi la mediana degli scarti applicata
+  // all'ultimo deposito da' una data attesa. Non e' una data annunciata.
+  const filedDates = eps
+    .map((q) => q.filed)
+    .filter((d): d is string => Boolean(d))
+    .sort();
+  let cadenceDays: number | null = null;
+  let nextReportEstimate: string | null = null;
+  if (filedDates.length >= 3) {
+    const gaps: number[] = [];
+    for (let i = 1; i < filedDates.length; i++) {
+      const d =
+        (new Date(filedDates[i]).getTime() -
+          new Date(filedDates[i - 1]).getTime()) /
+        86400000;
+      // Scarto gli intervalli anomali: un deposito tardivo o una
+      // rettifica falserebbero la mediana
+      if (d >= 60 && d <= 130) gaps.push(d);
+    }
+    if (gaps.length >= 2) {
+      gaps.sort((a, b) => a - b);
+      const mid = Math.floor(gaps.length / 2);
+      cadenceDays =
+        gaps.length % 2 === 1 ? gaps[mid] : (gaps[mid - 1] + gaps[mid]) / 2;
+      const last = new Date(filedDates[filedDates.length - 1]);
+      nextReportEstimate = new Date(
+        last.getTime() + cadenceDays * 86400000
+      )
+        .toISOString()
+        .slice(0, 10);
+    }
+  }
+
   // Serie storica del rapporto prezzo/utili: per ogni trimestre, il
   // prezzo di allora diviso l'utile dei dodici mesi precedenti. E' il
   // metro di paragone con cui si giudica il multiplo attuale.
@@ -227,6 +293,9 @@ export async function fetchFundamentals(
 
   return {
     ticker,
+    reports,
+    nextReportEstimate,
+    cadenceDays,
     ttmEps,
     ttmEpsYearAgo,
     ttmRevenue,

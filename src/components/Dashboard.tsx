@@ -22,6 +22,7 @@ import {
   Crosshair,
   Rows3,
   Scale,
+  CalendarDays,
   ArrowLeft,
   Shapes,
 } from 'lucide-react';
@@ -43,6 +44,7 @@ import SocialView from './SocialView';
 import OpportunitiesView from './OpportunitiesView';
 import GapsView from './GapsView';
 import ValuationsView from './ValuationsView';
+import EarningsView from './EarningsView';
 import FormationsView from './FormationsView';
 
 type View =
@@ -60,7 +62,8 @@ type View =
   | 'radar'
   | 'gaps'
   | 'valuations'
-  | 'formations';
+  | 'formations'
+  | 'earnings';
 
 const VIEW_LABELS: Record<View, string> = {
   chart: 'Chart',
@@ -77,6 +80,7 @@ const VIEW_LABELS: Record<View, string> = {
   radar: 'Radar',
   gaps: 'Gap',
   valuations: 'Valutazioni',
+  earnings: 'Trimestrali',
   formations: 'Figure',
 };
 
@@ -331,6 +335,12 @@ export default function Dashboard({
             label="Valutazioni"
           />
           <NavButton
+            active={view === 'earnings'}
+            onClick={() => setView('earnings')}
+            icon={<CalendarDays className="w-4 h-4" />}
+            label="Trimestrali"
+          />
+          <NavButton
             active={view === 'gaps'}
             onClick={() => setView('gaps')}
             icon={<Rows3 className="w-4 h-4" />}
@@ -559,6 +569,12 @@ export default function Dashboard({
                   Valutazioni
                 </span>
               )}
+              {view === 'earnings' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <CalendarDays className="w-4 h-4 flex-shrink-0" />
+                  Trimestrali
+                </span>
+              )}
               {view === 'gaps' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <Rows3 className="w-4 h-4 flex-shrink-0" />
@@ -632,6 +648,7 @@ export default function Dashboard({
           {view === 'radar' && <OpportunitiesView onOpenTicker={onOpenTicker} />}
           {view === 'gaps' && <GapsView onOpenTicker={onOpenTicker} />}
           {view === 'valuations' && <ValuationsView onOpenTicker={onOpenTicker} />}
+          {view === 'earnings' && <EarningsView onOpenTicker={onOpenTicker} />}
           {view === 'formations' && <FormationsView onOpenTicker={onOpenTicker} />}
           {view === 'social' && <SocialView onOpenTicker={onOpenTicker} />}
           {view === 'movers' && <MoversView onOpenTicker={onOpenTicker} />}

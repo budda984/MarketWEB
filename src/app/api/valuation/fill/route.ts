@@ -56,6 +56,7 @@ export async function POST(req: Request) {
 
     const candlesMap = await yahooDownloadMany(chunk, '5y', '1d', 6);
     const rows: Array<Record<string, unknown>> = [];
+    const reportRows: Array<Record<string, unknown>> = [];
     let skipped = 0;
 
     for (const ticker of chunk) {
@@ -72,6 +73,18 @@ export async function POST(req: Request) {
         await sleep(150);
         continue;
       }
+      for (const r of f.reports) {
+        reportRows.push({
+          ticker,
+          period_end: r.periodEnd,
+          filed_date: r.filedDate,
+          eps: r.eps,
+          revenue: r.revenue,
+          form: r.form,
+          updated_at: new Date().toISOString(),
+        });
+      }
+
       const v = buildVerdict(f);
       rows.push({
         ticker,
@@ -89,9 +102,24 @@ export async function POST(req: Request) {
         verdict_headline: v.headline,
         verdict_reasons: v.reasons,
         last_report_date: f.lastReportDate,
+        next_report_estimate: f.nextReportEstimate,
+        cadence_days: f.cadenceDays,
         quarters_available: f.quartersAvailable,
         updated_at: new Date().toISOString(),
       });
+    }
+
+    // I trimestri arrivano dagli stessi bilanci gia' scaricati: salvarli
+    // qui evita di interrogare di nuovo la SEC
+    if (reportRows.length > 0) {
+      const seen = new Map<string, (typeof reportRows)[0]>();
+      for (const r of reportRows) seen.set(`${r.ticker}|${r.period_end}`, r);
+      await admin
+        .from('earnings_reports')
+        .upsert(Array.from(seen.values()), {
+          onConflict: 'ticker,period_end',
+          ignoreDuplicates: false,
+        });
     }
 
     let saved = 0;

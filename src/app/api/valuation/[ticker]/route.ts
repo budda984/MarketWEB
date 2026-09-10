@@ -81,6 +81,8 @@ export async function GET(
       verdict_headline: v.headline,
       verdict_reasons: v.reasons,
       last_report_date: f.lastReportDate,
+      next_report_estimate: f.nextReportEstimate,
+      cadence_days: f.cadenceDays,
       quarters_available: f.quartersAvailable,
       updated_at: new Date().toISOString(),
     };
