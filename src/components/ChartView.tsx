@@ -43,11 +43,16 @@ type QuoteData = {
     shortName?: string;
     marketCap?: number;
     peRatio?: number;
+    forwardPE?: number;
     dividendYield?: number;
     fiftyTwoWeekHigh?: number;
     fiftyTwoWeekLow?: number;
+    beta?: number;
+    profitMargin?: number;
+    revenueGrowth?: number;
     sector?: string;
     industry?: string;
+    country?: string;
   } | null;
   candles: OHLCV[];
 };
@@ -596,10 +601,22 @@ function hasAnyStat(q: QuoteData['quote']): boolean {
   return (
     q.marketCap != null ||
     q.peRatio != null ||
+    q.forwardPE != null ||
     q.dividendYield != null ||
     q.fiftyTwoWeekHigh != null ||
     q.fiftyTwoWeekLow != null
   );
+}
+
+/**
+ * Valuta della capitalizzazione. Londra e Johannesburg quotano in
+ * centesimi (GBp, ZAc), ma Yahoo esprime la capitalizzazione nella valuta
+ * intera: con l'etichetta del prezzo sembrerebbe cento volte piu' piccola.
+ */
+function capCurrency(c?: string): string {
+  if (!c) return '';
+  const minor: Record<string, string> = { GBp: 'GBP', GBX: 'GBP', ZAc: 'ZAR', ZAC: 'ZAR', ILA: 'ILS' };
+  return minor[c] ?? c;
 }
 
 function formatMarketCap(n?: number): string {
@@ -629,19 +646,24 @@ function FundamentalsCard({
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat
-          label="Market Cap"
+          label="Capitalizzazione"
           value={
             quote.marketCap != null
-              ? `${formatMarketCap(quote.marketCap)} ${quote.currency ?? ''}`
+              ? `${formatMarketCap(quote.marketCap)} ${capCurrency(quote.currency)}`
               : '—'
           }
         />
         <Stat
-          label="P/E ratio"
-          value={quote.peRatio != null ? quote.peRatio.toFixed(2) : '—'}
+          label="P/E"
+          value={quote.peRatio != null ? quote.peRatio.toFixed(1) : '—'}
+          sub={
+            quote.forwardPE != null
+              ? `atteso: ${quote.forwardPE.toFixed(1)}`
+              : undefined
+          }
         />
         <Stat
-          label="Div. yield"
+          label="Dividendo"
           value={
             quote.dividendYield != null
               ? `${(quote.dividendYield * 100).toFixed(2)}%`
@@ -649,7 +671,7 @@ function FundamentalsCard({
           }
         />
         <Stat
-          label="52w range"
+          label="Range 52 settimane"
           value={
             quote.fiftyTwoWeekLow != null && quote.fiftyTwoWeekHigh != null
               ? `${quote.fiftyTwoWeekLow.toFixed(2)} – ${quote.fiftyTwoWeekHigh.toFixed(2)}`
@@ -661,11 +683,32 @@ function FundamentalsCard({
               : undefined
           }
         />
+        <Stat
+          label="Margine netto"
+          value={
+            quote.profitMargin != null
+              ? `${(quote.profitMargin * 100).toFixed(1)}%`
+              : '—'
+          }
+        />
+        <Stat
+          label="Crescita ricavi"
+          value={
+            quote.revenueGrowth != null
+              ? `${quote.revenueGrowth >= 0 ? '+' : ''}${(quote.revenueGrowth * 100).toFixed(1)}%`
+              : '—'
+          }
+          sub={quote.revenueGrowth != null ? 'ultimo trimestre su anno' : undefined}
+        />
+        <Stat
+          label="Beta"
+          value={quote.beta != null ? quote.beta.toFixed(2) : '—'}
+          sub={quote.beta != null ? 'volatilità rispetto al mercato' : undefined}
+        />
       </div>
-      {(quote.sector || quote.industry) && (
-        <div className="mt-3 pt-3 border-t border-brand-border text-xs text-brand-muted">
-          {quote.sector}
-          {quote.industry && ` · ${quote.industry}`}
+      {(quote.sector || quote.industry || quote.country) && (
+        <div className="mt-3 pt-3 border-t border-brand-border text-xs text-brand-muted break-words">
+          {[quote.sector, quote.industry, quote.country].filter(Boolean).join(' · ')}
         </div>
       )}
     </div>

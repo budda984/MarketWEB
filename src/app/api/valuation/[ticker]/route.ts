@@ -3,7 +3,8 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { yahooDownload } from '@/lib/yahoo';
 import { fetchTickerCikMap } from '@/lib/sec';
-import { fetchFundamentals, buildVerdict } from '@/lib/valuation';
+import { getMarketForTicker } from '@/lib/tickers';
+import { buildValuation, valuationDbErrorMessage } from '@/lib/valuation-row';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,9 +14,19 @@ export const maxDuration = 60;
  * GET /api/valuation/AAPL
  *
  * Serve il giudizio dalla cache se recente, altrimenti lo ricostruisce
- * dai bilanci. I bilanci cambiano quattro volte l'anno: aggiornare piu'
- * spesso sarebbe inutile e peserebbe sui limiti della SEC.
+ * dai bilanci: SEC per i titoli USA, Yahoo per gli altri. I bilanci
+ * cambiano quattro volte l'anno: aggiornare piu' spesso sarebbe inutile.
  */
+
+// Strumenti senza bilancio: si risponde subito, senza interrogare nessuno
+const NO_BALANCE_MARKETS = new Set(['Crypto', 'Forex', 'Commodities', 'ETF']);
+
+function hasNoBalanceSheet(ticker: string): boolean {
+  if (/[=^]/.test(ticker) || /-USD$|-EUR$/.test(ticker)) return true;
+  const m = getMarketForTicker(ticker);
+  return m != null && NO_BALANCE_MARKETS.has(m);
+}
+
 export async function GET(
   _req: Request,
   { params }: { params: { ticker: string } }
@@ -27,6 +38,14 @@ export async function GET(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const ticker = decodeURIComponent(params.ticker).toUpperCase();
+
+  if (hasNoBalanceSheet(ticker)) {
+    return NextResponse.json({
+      valuation: null,
+      reason: 'La valutazione sui bilanci vale solo per le azioni.',
+    });
+  }
+
   const admin = createAdminClient();
 
   try {
@@ -46,63 +65,26 @@ export async function GET(
     }
 
     // Ricostruzione
-    const map = await fetchTickerCikMap();
-    const entry = map.get(ticker);
-    if (!entry) {
-      return NextResponse.json({
-        valuation: null,
-        reason: 'Titolo non presente nell\'anagrafica SEC: probabilmente non e\' quotato negli Stati Uniti.',
-      });
+    const [map, candles] = await Promise.all([
+      fetchTickerCikMap(),
+      yahooDownload(ticker, '5y', '1d'),
+    ]);
+    const built = await buildValuation(ticker, candles, map.get(ticker));
+    if (!built.ok) {
+      return NextResponse.json({ valuation: null, reason: built.reason });
     }
-
-    const candles = await yahooDownload(ticker, '5y', '1d');
-    const f = await fetchFundamentals(ticker, entry.cik, candles);
-    if (!f) {
-      return NextResponse.json({
-        valuation: null,
-        reason: 'Dati di bilancio insufficienti per questo titolo.',
-      });
-    }
-
-    const v = buildVerdict(f);
-    const row = {
-      ticker,
-      price: f.price,
-      ttm_eps: f.ttmEps,
-      ttm_revenue: f.ttmRevenue,
-      eps_growth_pct: f.epsGrowthPct,
-      revenue_growth_pct: f.revenueGrowthPct,
-      net_margin: f.netMargin,
-      margin_change_pct: f.marginChangePct,
-      current_pe: f.currentPe,
-      median_pe: f.medianPe,
-      pe_discount_pct: f.peDiscountPct,
-      verdict_level: v.level,
-      verdict_headline: v.headline,
-      verdict_reasons: v.reasons,
-      last_report_date: f.lastReportDate,
-      next_report_estimate: f.nextReportEstimate,
-      cadence_days: f.cadenceDays,
-      quarters_available: f.quartersAvailable,
-      updated_at: new Date().toISOString(),
-    };
 
     const { error } = await admin
       .from('valuations')
-      .upsert(row, { onConflict: 'ticker', ignoreDuplicates: false });
+      .upsert(built.row, { onConflict: 'ticker', ignoreDuplicates: false });
     if (error) {
-      const missing = /schema cache|does not exist/i.test(error.message);
       return NextResponse.json(
-        {
-          error: missing
-            ? "La tabella 'valuations' non esiste ancora: esegui la migration 012_valuation.sql."
-            : error.message,
-        },
+        { error: valuationDbErrorMessage(error.message) },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ valuation: row, cached: false });
+    return NextResponse.json({ valuation: built.row, cached: false });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : 'errore sconosciuto' },

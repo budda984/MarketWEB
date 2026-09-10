@@ -77,8 +77,9 @@ export default function ValuationsView({ onOpenTicker }: Props) {
     let saved = 0;
     try {
       // I limiti della SEC impongono un ritmo lento: servono molte
-      // chiamate, e l'archivio si costruisce progressivamente
-      while (guard++ < 60) {
+      // chiamate, e l'archivio si costruisce progressivamente. Con i
+      // mercati non USA l'universo e' di circa 850 titoli, 12 per giro.
+      while (guard++ < 150) {
         const r = await fetch('/api/valuation/fill', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -156,8 +157,9 @@ export default function ValuationsView({ onOpenTicker }: Props) {
         )}
         {filling && (
           <div className="text-xs text-brand-muted break-words">
-            La SEC limita il ritmo delle richieste, quindi l&apos;analisi
-            procede lentamente: puoi lasciarla lavorare e tornare più tardi.
+            La SEC limita il ritmo delle richieste, quindi l&apos;analisi dei
+            titoli USA procede lentamente; quelli degli altri mercati vanno più
+            veloci. Tieni la pagina aperta finché non finisce.
           </div>
         )}
       </div>
@@ -173,7 +175,8 @@ export default function ValuationsView({ onOpenTicker }: Props) {
           <div className="text-4xl">⚖️</div>
           <div className="text-sm text-brand-muted break-words">
             Archivio vuoto. Premi <strong>Costruisci archivio</strong> per
-            analizzare i bilanci depositati alla SEC.
+            analizzare i bilanci: SEC per i titoli USA, Yahoo per gli altri
+            mercati.
           </div>
         </div>
       )}

@@ -10,6 +10,8 @@ type Valuation = {
   verdict_reasons: string[] | null;
   pe_discount_pct: number | null;
   last_report_date: string | null;
+  /** Fonte dei bilanci; assente nelle righe salvate prima della 017 */
+  source?: string | null;
 };
 
 const STYLE: Record<string, string> = {
@@ -94,7 +96,8 @@ export default function ValuationCard({ ticker }: { ticker: string }) {
       )}
 
       <div className="text-[10px] text-brand-muted/70 break-words">
-        Confronto con la valutazione storica del titolo, da bilanci SEC
+        Confronto con la valutazione storica del titolo, da bilanci{' '}
+        {v.source === 'yahoo' ? 'Yahoo' : 'SEC'}
         {v.last_report_date && ` · ultimo bilancio ${v.last_report_date}`}. Non
         è una previsione sul prezzo.
       </div>

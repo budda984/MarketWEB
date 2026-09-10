@@ -178,14 +178,10 @@ type YahooChartResponse = {
 };
 
 /**
- * Quote arricchito. Nella versione attuale gli endpoint Yahoo
- * quoteSummary e search sono bloccati da IP cloud (403 Host not in
- * allowlist), quindi ritorniamo solo i campi base da yahooQuote +
- * il nome completo dal dizionario locale TICKER_NAMES.
- *
- * I campi di fondamentali (marketCap, peRatio, ecc.) sono dichiarati
- * per compatibilità futura ma restano undefined. Il client nasconde la
- * card Fondamentali se tutti questi campi sono assenti.
+ * Quote arricchito: prezzo dal grafico, piu' il profilo da quoteSummary
+ * (capitalizzazione, multipli, dividendo, settore) quando Yahoo lo
+ * fornisce. Se il profilo non arriva si restituiscono i soli campi base
+ * e il client nasconde la scheda Fondamentali.
  */
 export type YahooQuoteFull = {
   ticker: string;
@@ -198,31 +194,58 @@ export type YahooQuoteFull = {
   shortName?: string;
   marketCap?: number;
   peRatio?: number;
+  forwardPE?: number;
   dividendYield?: number;
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
+  beta?: number;
+  /** Frazioni: 0.21 = 21% */
+  profitMargin?: number;
+  revenueGrowth?: number;
   sector?: string;
   industry?: string;
+  country?: string;
 };
 
 export async function yahooQuoteFull(
   ticker: string,
   timeoutMs = 12000
 ): Promise<YahooQuoteFull | null> {
-  const base = await yahooQuote(ticker, timeoutMs);
+  // Import dinamici: ticker-names e' grande, yahoo-fundamentals importa
+  // a sua volta questo modulo
+  const [base, { TICKER_NAMES }, { fetchYahooProfile }] = await Promise.all([
+    yahooQuote(ticker, timeoutMs),
+    import('./ticker-names'),
+    import('./yahoo-fundamentals'),
+  ]);
   if (!base) return null;
 
-  // Import dinamico per evitare circular deps (ticker-names è side-effect free).
-  const { TICKER_NAMES } = await import('./ticker-names');
+  // Il profilo non deve mai far fallire il grafico
+  const profile = await fetchYahooProfile(ticker).catch(() => null);
+  const u = <T,>(v: T | null | undefined): T | undefined => v ?? undefined;
+
   const longName =
     TICKER_NAMES[ticker] ??
     TICKER_NAMES[ticker.toUpperCase()] ??
+    profile?.longName ??
     base.longName ??
     base.shortName;
 
   return {
     ...base,
     longName,
+    marketCap: u(profile?.marketCap),
+    peRatio: u(profile?.trailingPE),
+    forwardPE: u(profile?.forwardPE),
+    dividendYield: u(profile?.dividendYield),
+    fiftyTwoWeekHigh: u(profile?.fiftyTwoWeekHigh),
+    fiftyTwoWeekLow: u(profile?.fiftyTwoWeekLow),
+    beta: u(profile?.beta),
+    profitMargin: u(profile?.profitMargin),
+    revenueGrowth: u(profile?.revenueGrowth),
+    sector: u(profile?.sector),
+    industry: u(profile?.industry),
+    country: u(profile?.country),
   };
 }
 

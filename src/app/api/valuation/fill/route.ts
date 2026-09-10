@@ -4,7 +4,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { yahooDownloadMany } from '@/lib/yahoo';
 import { MARKETS } from '@/lib/tickers';
 import { fetchTickerCikMap } from '@/lib/sec';
-import { fetchFundamentals, buildVerdict, sleep } from '@/lib/valuation';
+import { sleep } from '@/lib/valuation';
+import { buildValuation, valuationDbErrorMessage } from '@/lib/valuation-row';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,11 +15,20 @@ export const maxDuration = 60;
  * POST /api/valuation/fill
  * body: { offset?: number }
  *
- * Popola l'archivio delle valutazioni. Ogni titolo richiede tre o
- * quattro chiamate alla SEC con la pausa imposta dai suoi limiti, quindi
- * il ritmo e' di pochi titoli al secondo: l'elaborazione procede a
- * scaglioni e va ripresa piu' volte.
+ * Popola l'archivio delle valutazioni. Prima i titoli USA, dai bilanci
+ * SEC; poi le azioni degli altri mercati, dai bilanci Yahoo. Per la SEC
+ * ogni titolo richiede tre o quattro chiamate con la pausa imposta dai
+ * suoi limiti, quindi l'elaborazione procede a scaglioni e va ripresa
+ * piu' volte.
  */
+
+// Mercati azionari fuori dagli USA: niente crypto, cambi, materie prime
+// ed ETF, che un bilancio non ce l'hanno
+const NON_US_EQUITY = [
+  'Italia', 'Francia', 'Germania', 'Olanda', 'UK', 'Spagna', 'Svizzera',
+  'Svezia', 'Danimarca', 'Norvegia', 'Finlandia', 'Austria', 'Belgio',
+  'Portogallo', 'Polonia', 'Turchia', 'Grecia', 'Giappone',
+] as const;
 export async function POST(req: Request) {
   const supabase = createClient();
   const {
@@ -37,6 +47,9 @@ export async function POST(req: Request) {
       new Set([
         ...((MARKETS['S&P 500'] as readonly string[]) ?? []),
         ...((MARKETS['NASDAQ'] as readonly string[]) ?? []),
+        ...NON_US_EQUITY.flatMap(
+          (m) => (MARKETS[m] as readonly string[] | undefined) ?? []
+        ),
       ])
     );
 
@@ -59,54 +72,44 @@ export async function POST(req: Request) {
     const reportRows: Array<Record<string, unknown>> = [];
     let skipped = 0;
 
+    let processed = 0;
+    let fromSec = 0;
+    let fromYahoo = 0;
     for (const ticker of chunk) {
+      // Si esce prima dei 60 secondi: i titoli rimasti si riprendono al
+      // giro successivo, perche' nextOffset conta solo quelli fatti
       if (Date.now() - t0 > 45000) break;
+      processed++;
       const entry = map.get(ticker);
       const candles = candlesMap[ticker];
-      if (!entry || !candles || candles.length < 100) {
+      if (!candles || candles.length < 100) {
         skipped++;
         continue;
       }
-      const f = await fetchFundamentals(ticker, entry.cik, candles);
-      if (!f) {
+      const built = await buildValuation(ticker, candles, entry);
+      if (!built.ok) {
         skipped++;
         await sleep(150);
         continue;
       }
-      for (const r of f.reports) {
-        reportRows.push({
-          ticker,
-          period_end: r.periodEnd,
-          filed_date: r.filedDate,
-          eps: r.eps,
-          revenue: r.revenue,
-          form: r.form,
-          updated_at: new Date().toISOString(),
-        });
+      if (built.source === 'sec') {
+        fromSec++;
+        // I trimestri con data di deposito esistono solo nei bilanci SEC
+        for (const r of built.f.reports) {
+          reportRows.push({
+            ticker,
+            period_end: r.periodEnd,
+            filed_date: r.filedDate,
+            eps: r.eps,
+            revenue: r.revenue,
+            form: r.form,
+            updated_at: new Date().toISOString(),
+          });
+        }
+      } else {
+        fromYahoo++;
       }
-
-      const v = buildVerdict(f);
-      rows.push({
-        ticker,
-        price: f.price,
-        ttm_eps: f.ttmEps,
-        ttm_revenue: f.ttmRevenue,
-        eps_growth_pct: f.epsGrowthPct,
-        revenue_growth_pct: f.revenueGrowthPct,
-        net_margin: f.netMargin,
-        margin_change_pct: f.marginChangePct,
-        current_pe: f.currentPe,
-        median_pe: f.medianPe,
-        pe_discount_pct: f.peDiscountPct,
-        verdict_level: v.level,
-        verdict_headline: v.headline,
-        verdict_reasons: v.reasons,
-        last_report_date: f.lastReportDate,
-        next_report_estimate: f.nextReportEstimate,
-        cadence_days: f.cadenceDays,
-        quarters_available: f.quartersAvailable,
-        updated_at: new Date().toISOString(),
-      });
+      rows.push(built.row);
     }
 
     // I trimestri arrivano dagli stessi bilanci gia' scaricati: salvarli
@@ -128,20 +131,16 @@ export async function POST(req: Request) {
         .from('valuations')
         .upsert(rows, { onConflict: 'ticker', ignoreDuplicates: false });
       if (error) {
-        const missing = /schema cache|does not exist/i.test(error.message);
         return NextResponse.json(
-          {
-            error: missing
-              ? "La tabella 'valuations' non esiste ancora: esegui la migration 012_valuation.sql."
-              : `Salvataggio fallito: ${error.message}`,
-          },
+          { error: `Salvataggio fallito: ${valuationDbErrorMessage(error.message)}` },
           { status: 500 }
         );
       }
       saved = rows.length;
     }
 
-    const next = offset + BATCH;
+    // Almeno un passo avanti, per non ripetere all'infinito lo stesso lotto
+    const next = offset + Math.max(processed, 1);
     const done = next >= universe.length;
     return NextResponse.json({
       ok: true,
@@ -152,6 +151,8 @@ export async function POST(req: Request) {
         processedUpTo: Math.min(next, universe.length),
         saved,
         skipped,
+        fromSec,
+        fromYahoo,
         elapsedMs: Date.now() - t0,
       },
     });
