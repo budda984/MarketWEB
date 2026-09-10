@@ -240,6 +240,9 @@ export default function FormationsView({ onOpenTicker }: Props) {
                   <option value="HS">Testa e spalle</option>
                   <option value="DOUBLE_TOP">Doppio massimo</option>
                   <option value="FALLING_WEDGE">Cuneo discendente</option>
+                  <option value="RISING_WEDGE">Cuneo ascendente</option>
+                  <option value="BULL_FLAG">Bandiera rialzista</option>
+                  <option value="BEAR_FLAG">Bandiera ribassista</option>
                 </select>
               </label>
               <label className="flex items-center gap-1.5 text-xs">
@@ -383,11 +386,20 @@ export default function FormationsView({ onOpenTicker }: Props) {
           figura viene disegnata sul grafico giornaliero.
         </p>
         <p className="break-words">
-          Il <strong>cuneo discendente</strong> ha una geometria diversa: due
-          rette entrambe inclinate al ribasso che convergono, con i massimi
-          che scendono più rapidamente dei minimi. Non c&apos;è una linea del
-          collo orizzontale — il livello di conferma è la retta superiore,
-          che si abbassa a ogni seduta.
+          I <strong>cunei</strong> hanno due rette convergenti invece di una
+          linea del collo orizzontale: il livello di conferma si sposta a
+          ogni seduta. Nel cuneo discendente entrambe scendono e i massimi
+          più in fretta dei minimi, con rottura attesa al rialzo; in quello
+          ascendente è il contrario.
+        </p>
+        <p className="break-words">
+          Le <strong>bandiere</strong> sono un&apos;asta — un movimento
+          ripido e breve — seguita da un canale stretto che deriva in
+          direzione opposta. La rottura avviene nella direzione
+          dell&apos;asta, e l&apos;obiettivo è l&apos;altezza dell&apos;asta
+          proiettata dal punto di rottura. Se il consolidamento restituisce
+          più di metà dell&apos;asta non è più una pausa, è un&apos;inversione,
+          e la figura viene scartata.
         </p>
         <p className="break-words">
           Le figure ribassiste — testa e spalle e doppio massimo — seguono

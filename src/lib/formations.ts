@@ -23,7 +23,10 @@ export type FormationKind =
   | 'DOUBLE_BOTTOM'
   | 'HS'
   | 'DOUBLE_TOP'
-  | 'FALLING_WEDGE';
+  | 'FALLING_WEDGE'
+  | 'RISING_WEDGE'
+  | 'BULL_FLAG'
+  | 'BEAR_FLAG';
 export type FormationDirection = 'bullish' | 'bearish';
 export type FormationState = 'forming' | 'right_shoulder' | 'confirmed';
 
@@ -33,6 +36,9 @@ export const FORMATION_LABELS: Record<FormationKind, string> = {
   HS: 'Testa e spalle',
   DOUBLE_TOP: 'Doppio massimo',
   FALLING_WEDGE: 'Cuneo discendente',
+  RISING_WEDGE: 'Cuneo ascendente',
+  BULL_FLAG: 'Bandiera rialzista',
+  BEAR_FLAG: 'Bandiera ribassista',
 };
 
 export const FORMATION_DIRECTION: Record<FormationKind, FormationDirection> = {
@@ -41,6 +47,9 @@ export const FORMATION_DIRECTION: Record<FormationKind, FormationDirection> = {
   HS: 'bearish',
   DOUBLE_TOP: 'bearish',
   FALLING_WEDGE: 'bullish',
+  RISING_WEDGE: 'bearish',
+  BULL_FLAG: 'bullish',
+  BEAR_FLAG: 'bearish',
 };
 
 /**
@@ -50,7 +59,10 @@ export const FORMATION_DIRECTION: Record<FormationKind, FormationDirection> = {
 export function stateLabel(kind: FormationKind, state: FormationState): string {
   if (state === 'confirmed') return 'Linea del collo rotta';
   if (state === 'forming') return 'In formazione';
-  if (kind === 'FALLING_WEDGE') return 'Cuneo in compressione';
+  if (kind === 'FALLING_WEDGE' || kind === 'RISING_WEDGE')
+    return 'Cuneo in compressione';
+  if (kind === 'BULL_FLAG' || kind === 'BEAR_FLAG')
+    return 'Consolidamento maturo';
   if (kind === 'IHS' || kind === 'HS') return 'Spalla destra completata';
   return kind === 'DOUBLE_TOP'
     ? 'Secondo massimo formato'
@@ -757,7 +769,8 @@ export function detectFormations(
   // orizzontale: il livello di conferma e' la retta superiore, che si
   // abbassa a ogni seduta.
   // ------------------------------------------------------------------
-  {
+  for (const wedgeKind of ['FALLING_WEDGE', 'RISING_WEDGE'] as const) {
+    const bullishWedge = wedgeKind === 'FALLING_WEDGE';
     const WEDGE_MIN_BARS = 30;
     const WEDGE_MAX_BARS = 130;
     const MIN_TOUCHES = 3;
@@ -778,10 +791,16 @@ export function detectFormations(
       const lo = linreg(wLows.map((p) => p.idx), wLows.map((p) => p.price));
       if (up.r2 < MIN_R2 || lo.r2 < MIN_R2) continue;
 
-      // Entrambe devono scendere: e' un cuneo discendente
-      if (up.slope >= 0 || lo.slope >= 0) continue;
-      // E i massimi devono scendere piu' in fretta dei minimi
-      if (up.slope >= lo.slope) continue;
+      if (wedgeKind === 'FALLING_WEDGE') {
+        // Entrambe scendono, e i massimi piu' in fretta dei minimi
+        if (up.slope >= 0 || lo.slope >= 0) continue;
+        if (up.slope >= lo.slope) continue;
+      } else {
+        // Cuneo ascendente: entrambe salgono, e i minimi piu' in fretta
+        // dei massimi. La rottura avviene di norma verso il basso.
+        if (up.slope <= 0 || lo.slope <= 0) continue;
+        if (lo.slope <= up.slope) continue;
+      }
 
       const startIdx = Math.min(wHighs[0].idx, wLows[0].idx);
       const widthStart = up.at(startIdx) - lo.at(startIdx);
@@ -794,29 +813,37 @@ export function detectFormations(
       const upperNow = up.at(lastIdx);
       const lowerNow = lo.at(lastIdx);
 
-      // Il prezzo deve stare dentro il cuneo, o averlo appena rotto al
-      // rialzo. Se e' sceso sotto la retta inferiore la figura e' fallita.
-      if (price < lowerNow * 0.97) continue;
+      // Il prezzo deve stare dentro il cuneo o averlo appena rotto nella
+      // direzione attesa. Uscito dalla parte opposta, la figura e' fallita.
+      if (bullishWedge) {
+        if (price < lowerNow * 0.97) continue;
+      } else if (price > upperNow * 1.03) {
+        continue;
+      }
 
-      // Punto di rottura: l'ultima seduta che stava ancora dentro il
-      // cuneo, piu' uno. Serve anche per fermare li' il disegno delle
-      // rette, che altrimenti proseguirebbero oltre la figura.
+      // Punto di rottura: l'ultima seduta ancora dentro il cuneo, piu'
+      // uno. Serve anche per fermare li' il disegno delle rette.
+      const insideAt = (i: number) =>
+        bullishWedge ? candles[i].c <= up.at(i) : candles[i].c >= lo.at(i);
+
       let breakoutIdx: number | null = null;
       for (let i = lastIdx; i > from; i--) {
-        if (candles[i].c <= up.at(i)) {
+        if (insideAt(i)) {
           breakoutIdx = i + 1 <= lastIdx ? i + 1 : null;
           break;
         }
       }
 
+      const brokeOut = bullishWedge ? price > upperNow : price < lowerNow;
+
       let state: FormationState;
-      if (price > upperNow && breakoutIdx != null) {
+      if (brokeOut && breakoutIdx != null) {
         // Conferma solo se la rottura e' recente: un cuneo rotto un mese
         // fa non e' piu' un'occasione
         if (lastIdx - breakoutIdx > 8) continue;
         state = 'confirmed';
-      } else if (price > upperNow) {
-        continue; // sopra la retta da sempre: non e' una rottura
+      } else if (brokeOut) {
+        continue; // fuori dalla retta da sempre: non e' una rottura
       } else if (convergence >= 0.5) {
         state = 'right_shoulder'; // compressione avanzata
       } else {
@@ -829,22 +856,27 @@ export function detectFormations(
         : lastIdx;
 
       const height = widthStart;
+      const breakLevel = bullishWedge ? upperNow : lowerNow;
+
       out.push({
         ticker,
-        kind: 'FALLING_WEDGE',
-        direction: 'bullish',
+        kind: wedgeKind,
+        direction: bullishWedge ? 'bullish' : 'bearish',
         state,
         points: [
           {
             time: candles[startIdx].t,
-            price: up.at(startIdx),
+            price: bullishWedge ? up.at(startIdx) : lo.at(startIdx),
             label: 'Inizio cuneo',
           },
-          { time: candles[lastIdx].t, price: upperNow, label: 'Rottura' },
+          { time: candles[lastIdx].t, price: breakLevel, label: 'Rottura' },
         ],
-        neckline: upperNow,
-        necklineFrom: { time: candles[startIdx].t, price: up.at(startIdx) },
-        necklineTo: { time: candles[lastIdx].t, price: upperNow },
+        neckline: breakLevel,
+        necklineFrom: {
+          time: candles[startIdx].t,
+          price: bullishWedge ? up.at(startIdx) : lo.at(startIdx),
+        },
+        necklineTo: { time: candles[lastIdx].t, price: breakLevel },
         upperLine: {
           from: { time: candles[startIdx].t, price: up.at(startIdx), label: '' },
           to: {
@@ -863,16 +895,174 @@ export function detectFormations(
         },
         convergencePct: convergence * 100,
         price,
-        distanceToNecklinePct: ((upperNow - price) / price) * 100,
-        depthPct: (height / upperNow) * 100,
+        distanceToNecklinePct: ((breakLevel - price) / price) * 100,
+        depthPct: (height / breakLevel) * 100,
         // Obiettivo classico: l'ampiezza iniziale del cuneo proiettata
-        // dal punto di rottura
-        target: upperNow + height,
+        // dal punto di rottura, nella direzione della rottura
+        target: bullishWedge ? breakLevel + height : breakLevel - height,
         barsSpan: lastIdx - startIdx,
         lastDate: isoDate(candles[lastIdx].t),
       });
       break; // un solo cuneo per titolo
     }
+  }
+
+  // ------------------------------------------------------------------
+  // BANDIERE
+  //
+  // Struttura diversa dalle altre: un'asta, cioe' un movimento ripido e
+  // breve, seguita da un canale stretto che deriva in direzione opposta.
+  // La rottura avviene nella direzione dell'asta.
+  //
+  // Le rette qui si adattano ai massimi e minimi delle singole sedute,
+  // non ai pivot: su una manciata di barre i pivot non esistono ancora.
+  // ------------------------------------------------------------------
+  {
+    const POLE_MIN_PCT = 8;
+    const POLE_MIN_BARS = 3;
+    const POLE_MAX_BARS = 15;
+    const FLAG_MIN_BARS = 6;
+    const FLAG_MAX_BARS = 25;
+    /** Quanto della salita puo' essere restituito dal consolidamento. */
+    const MAX_RETRACEMENT = 0.5;
+    /** Il canale deve essere stretto rispetto all'asta. */
+    const MAX_CHANNEL_RATIO = 0.5;
+    const MIN_CHANNEL_R2 = 0.45;
+
+    type Best = { score: number; build: () => Formation } | null;
+    let best: Best = null;
+
+    for (const flagKind of ['BULL_FLAG', 'BEAR_FLAG'] as const) {
+      const bull = flagKind === 'BULL_FLAG';
+
+      for (let flagLen = FLAG_MIN_BARS; flagLen <= FLAG_MAX_BARS; flagLen++) {
+        const flagStart = lastIdx - flagLen + 1;
+        if (flagStart < POLE_MAX_BARS + 2) continue;
+
+        for (let poleLen = POLE_MIN_BARS; poleLen <= POLE_MAX_BARS; poleLen++) {
+          const poleStart = flagStart - poleLen;
+          if (poleStart < 0) continue;
+
+          const a = candles[poleStart].c;
+          const b = candles[flagStart - 1].c;
+          if (a <= 0 || b <= 0) continue;
+          const polePct = ((b - a) / a) * 100;
+
+          // L'asta deve essere ampia e nella direzione giusta
+          if (bull ? polePct < POLE_MIN_PCT : polePct > -POLE_MIN_PCT) continue;
+          const poleHeight = Math.abs(b - a);
+
+          // Canale del consolidamento
+          const xs: number[] = [];
+          const hs: number[] = [];
+          const ls: number[] = [];
+          for (let i = flagStart; i <= lastIdx; i++) {
+            xs.push(i);
+            hs.push(candles[i].h);
+            ls.push(candles[i].l);
+          }
+          const upFit = linreg(xs, hs);
+          const loFit = linreg(xs, ls);
+          if (upFit.r2 < MIN_CHANNEL_R2 && loFit.r2 < MIN_CHANNEL_R2) continue;
+
+          // Il canale deriva contro l'asta, o al piu' resta piatto
+          const drift = (upFit.slope + loFit.slope) / 2;
+          const driftPct = (drift * flagLen) / b;
+          if (bull ? driftPct > 0.02 : driftPct < -0.02) continue;
+
+          // Ritracciamento contenuto: oltre meta' dell'asta non e' piu'
+          // una pausa, e' un'inversione
+          const extreme = bull
+            ? Math.min(...ls)
+            : Math.max(...hs);
+          const retraced = Math.abs(b - extreme) / poleHeight;
+          if (retraced > MAX_RETRACEMENT) continue;
+
+          // Canale stretto rispetto all'asta
+          const channelH = Math.abs(upFit.at(lastIdx) - loFit.at(lastIdx));
+          if (channelH / poleHeight > MAX_CHANNEL_RATIO) continue;
+
+          const upperNow = upFit.at(lastIdx);
+          const lowerNow = loFit.at(lastIdx);
+          const breakLevel = bull ? upperNow : lowerNow;
+          const brokeOut = bull ? price > upperNow : price < lowerNow;
+
+          // Uscita dalla parte sbagliata: la bandiera e' fallita
+          if (bull ? price < lowerNow * 0.97 : price > upperNow * 1.03) continue;
+
+          let state: FormationState;
+          if (brokeOut) {
+            state = 'confirmed';
+          } else if (flagLen >= 12) {
+            state = 'right_shoulder'; // consolidamento maturo
+          } else {
+            state = 'forming';
+          }
+
+          // Fra piu' combinazioni valide tengo quella con l'asta piu'
+          // decisa e il canale piu' stretto
+          const score =
+            Math.abs(polePct) * 2 - (channelH / poleHeight) * 50 - retraced * 30;
+          if (best && score <= best.score) continue;
+
+          best = {
+            score,
+            build: () => ({
+              ticker,
+              kind: flagKind,
+              direction: bull ? 'bullish' : 'bearish',
+              state,
+              points: [
+                {
+                  time: candles[poleStart].t,
+                  price: a,
+                  label: 'Inizio asta',
+                },
+                {
+                  time: candles[flagStart - 1].t,
+                  price: b,
+                  label: 'Fine asta',
+                },
+              ],
+              neckline: breakLevel,
+              necklineFrom: {
+                time: candles[flagStart].t,
+                price: bull ? upFit.at(flagStart) : loFit.at(flagStart),
+              },
+              necklineTo: { time: candles[lastIdx].t, price: breakLevel },
+              upperLine: {
+                from: {
+                  time: candles[flagStart].t,
+                  price: upFit.at(flagStart),
+                  label: '',
+                },
+                to: { time: candles[lastIdx].t, price: upperNow, label: '' },
+              },
+              lowerLine: {
+                from: {
+                  time: candles[flagStart].t,
+                  price: loFit.at(flagStart),
+                  label: '',
+                },
+                to: { time: candles[lastIdx].t, price: lowerNow, label: '' },
+              },
+              price,
+              distanceToNecklinePct: ((breakLevel - price) / price) * 100,
+              depthPct: (poleHeight / b) * 100,
+              // Obiettivo classico: l'altezza dell'asta proiettata dal
+              // punto di rottura
+              target: bull
+                ? breakLevel + poleHeight
+                : breakLevel - poleHeight,
+              barsSpan: lastIdx - poleStart,
+              lastDate: isoDate(candles[lastIdx].t),
+            }),
+          };
+        }
+      }
+    }
+
+    if (best) out.push(best.build());
   }
 
   return out;
