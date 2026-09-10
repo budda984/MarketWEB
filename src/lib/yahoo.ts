@@ -658,6 +658,13 @@ export async function yahooSearch(
       if (type && SEARCH_TYPES_EXCLUDED.has(type)) continue;
       const symbol = r.symbol.toUpperCase();
       if (seen.has(symbol)) continue;
+      // Rumore frequente nei risultati:
+      //  - i veri indici Yahoo iniziano con ^; gli altri "INDEX" sono
+      //    prodotti strutturati (certificati svizzeri e simili);
+      //  - .XC e' Cboe Europe, un duplicato della quotazione principale
+      //    con dati scarsi.
+      if (type === 'INDEX' && !symbol.startsWith('^')) continue;
+      if (symbol.endsWith('.XC')) continue;
       seen.add(symbol);
       out.push({
         symbol,
