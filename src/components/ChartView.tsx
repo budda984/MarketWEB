@@ -235,32 +235,6 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
         )}
       </div>
 
-      {/* Selettore timeframe */}
-      <div className="card p-2 flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-brand-muted font-semibold uppercase tracking-wide px-2">
-          Timeframe
-        </span>
-        <div className="flex items-center gap-1 bg-brand-panel rounded p-0.5">
-          {(['1h', '4h', '1d', '1w'] as Timeframe[]).map((tf) => (
-            <button
-              key={tf}
-              onClick={() => setTimeframe(tf)}
-              className={`px-3 py-1 rounded text-xs font-mono font-semibold transition ${
-                timeframe === tf
-                  ? 'bg-brand-green text-black'
-                  : 'text-brand-muted hover:text-brand-text'
-              }`}
-              title={tfLabel(tf)}
-            >
-              {tf}
-            </button>
-          ))}
-        </div>
-        <span className="text-xs text-brand-muted hidden sm:inline">
-          {tfLabel(timeframe)}
-        </span>
-      </div>
-
       {loading && (
         <div className="p-10 text-center text-brand-muted text-sm">
           Caricamento {ticker}…
@@ -341,7 +315,32 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
             currentPrice={data.quote?.price ?? null}
           />
 
-          {/* Pannello 1: Linea o Candele + HMA 50 */}
+          {/* Selettore timeframe, subito sopra il grafico */}
+          <div className="card p-2 flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-brand-muted font-semibold uppercase tracking-wide px-2">
+              Timeframe
+            </span>
+            <div className="flex items-center gap-1 bg-brand-panel rounded p-0.5">
+              {(['1h', '4h', '1d', '1w'] as Timeframe[]).map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => setTimeframe(tf)}
+                  className={`px-3 py-1 rounded text-xs font-mono font-semibold transition ${
+                    timeframe === tf
+                      ? 'bg-brand-green text-black'
+                      : 'text-brand-muted hover:text-brand-text'
+                  }`}
+                  title={tfLabel(tf)}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-brand-muted hidden sm:inline">
+              {tfLabel(timeframe)}
+            </span>
+          </div>
+
           <LightweightChart
             ticker={ticker}
             candles={data.candles}
