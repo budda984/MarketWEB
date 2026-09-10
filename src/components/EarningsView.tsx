@@ -1,7 +1,14 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { CalendarDays, ExternalLink, Info, AlertTriangle } from 'lucide-react';
+import {
+  CalendarDays,
+  ExternalLink,
+  Info,
+  AlertTriangle,
+  Search,
+  Loader2,
+} from 'lucide-react';
 import LastScan from './LastScan';
 
 type Report = {
@@ -30,6 +37,9 @@ export default function EarningsView({ onOpenTicker }: Props) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
+  const [query, setQuery] = useState('');
+  const [fetching, setFetching] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,6 +69,41 @@ export default function EarningsView({ onOpenTicker }: Props) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Scarica i trimestri di un singolo titolo senza attendere la
+  // costruzione dell'intero archivio
+  async function fetchOne() {
+    const t = query.trim().toUpperCase();
+    if (!t) return;
+    setFetching(true);
+    setMsg(null);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/earnings/${encodeURIComponent(t)}`);
+      const text = await r.text();
+      const d = text ? JSON.parse(text) : {};
+      if (d.error) {
+        setErr(d.error);
+        return;
+      }
+      if (!d.reports || d.reports.length === 0) {
+        setMsg(d.reason ?? `Nessun trimestre trovato per ${t}.`);
+        return;
+      }
+      setMsg(
+        `${d.reports.length} trimestri caricati per ${t}` +
+          (d.nextReportEstimate
+            ? ` · prossimo atteso ${d.nextReportEstimate}`
+            : '')
+      );
+      setTab('past');
+      await load();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setFetching(false);
+    }
+  }
 
   function daysTo(dateStr: string): number {
     return Math.round(
@@ -95,6 +140,37 @@ export default function EarningsView({ onOpenTicker }: Props) {
           ))}
         </div>
 
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1 min-w-0">
+            <Search className="w-3.5 h-3.5 text-brand-muted absolute left-2 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') fetchOne();
+              }}
+              placeholder="Carica un titolo (es. IBM)"
+              className="input w-full text-xs py-1.5 pl-7 font-mono"
+              autoCapitalize="characters"
+            />
+          </div>
+          <button
+            onClick={fetchOne}
+            disabled={fetching || !query.trim()}
+            className="btn-ghost text-xs flex-shrink-0 disabled:opacity-50"
+          >
+            {fetching ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              'Carica'
+            )}
+          </button>
+        </div>
+
+        {msg && (
+          <div className="text-xs text-brand-green break-words">{msg}</div>
+        )}
         {err && (
           <div className="text-xs text-brand-down break-words border border-brand-down/40 rounded p-2">
             {err}
@@ -112,8 +188,9 @@ export default function EarningsView({ onOpenTicker }: Props) {
         <div className="card p-8 text-center space-y-2">
           <div className="text-4xl">📅</div>
           <div className="text-sm text-brand-muted break-words">
-            Nessun dato. I trimestri si popolano insieme alle valutazioni:
-            vai in <strong>Valutazioni</strong> e costruisci l&apos;archivio.
+            Archivio vuoto. Puoi caricare un titolo alla volta con la
+            ricerca qui sopra, oppure popolare tutto insieme costruendo
+            l&apos;archivio in <strong>Valutazioni</strong>.
           </div>
         </div>
       )}
