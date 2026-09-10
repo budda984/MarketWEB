@@ -76,6 +76,16 @@ export type ChartGap = {
   filled: boolean;
 };
 
+/** Fair value gap ancora aperto (vedi lib/fvg.ts) */
+export type ChartFvg = {
+  direction: 'bullish' | 'bearish';
+  /** Candela centrale, secondi unix: puo' precedere lo storico caricato */
+  time: number;
+  bottom: number;
+  top: number;
+  sizePct: number;
+};
+
 type Props = {
   ticker: string;
   candles: OHLCV[];
@@ -83,6 +93,7 @@ type Props = {
   theme?: 'dark' | 'light';
   formation?: ChartFormation | null;
   gaps?: ChartGap[];
+  fvgs?: ChartFvg[];
 };
 
 export default function LightweightChart({
@@ -92,6 +103,7 @@ export default function LightweightChart({
   theme = 'dark',
   formation = null,
   gaps = [],
+  fvgs = [],
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -298,8 +310,21 @@ export default function LightweightChart({
       return { x: x as number, y: y as number };
     }
 
-    // I gap vanno per primi: restano sullo sfondo, sotto le figure e i
-    // disegni dell'utente
+    // I FVG vanno per primi: sono le fasce piu' ampie e restano sullo
+    // sfondo, sotto gap, figure e disegni dell'utente
+    if (fvgs.length > 0 && candles.length > 0) {
+      const plotRight = timeScale.width();
+      for (const f of fvgs) {
+        // La fascia parte dalla prima candela caricata successiva alla
+        // formazione: per i FVG piu' vecchi dello storico visibile, dal
+        // bordo sinistro
+        const startBar = candles.find((c) => c.t >= f.time) ?? null;
+        if (!startBar) continue;
+        drawFvg(ctx, f, startBar.t, plotRight, toCanvas);
+      }
+    }
+
+    // Poi i gap, sempre sotto le figure e i disegni dell'utente
     for (const g of gaps) {
       drawGap(ctx, g, toCanvas);
     }
@@ -331,7 +356,7 @@ export default function LightweightChart({
       }
       ctx.restore();
     }
-  }, [drawings, tool, draftPoints, formation, gaps]);
+  }, [drawings, tool, draftPoints, formation, gaps, fvgs, candles]);
 
   // Redraw quando drawings o draft cambiano + sync ref per le subscribe
   useEffect(() => {
@@ -701,6 +726,68 @@ function drawShape(ctx: CanvasRenderingContext2D, d: Drawing, toCanvas: CanvasMa
     );
     ctx.restore();
   }
+}
+
+/**
+ * Fascia di un fair value gap aperto, dalla candela di formazione al
+ * bordo destro: essendo aperto, e' ancora in gioco.
+ *
+ * Colori diversi da quelli dei gap di apertura, per non confonderli. Il
+ * bordo verso il prezzo e' marcato di piu': e' il livello il cui tocco
+ * chiude il FVG.
+ */
+function drawFvg(
+  ctx: CanvasRenderingContext2D,
+  f: ChartFvg,
+  startTime: number,
+  plotRight: number,
+  toCanvas: CanvasMapper
+) {
+  const bull = f.direction === 'bullish';
+  const color = bull ? '#38bdf8' : '#f472b6';
+
+  const a = toCanvas({ time: startTime, price: f.top });
+  const b = toCanvas({ time: startTime, price: f.bottom });
+  if (!a || !b) return;
+
+  const x = Math.max(0, a.x);
+  const w = plotRight - x;
+  if (w <= 0) return;
+  const yTop = a.y;
+  const yBottom = b.y;
+  const h = Math.max(1, yBottom - yTop);
+
+  ctx.save();
+  ctx.fillStyle = hexToRgba(color, 0.13);
+  ctx.fillRect(x, yTop, w, h);
+
+  // Bordo lontano dal prezzo: sottile
+  ctx.strokeStyle = hexToRgba(color, 0.4);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  const farY = bull ? yBottom : yTop;
+  ctx.moveTo(x, farY);
+  ctx.lineTo(plotRight, farY);
+  ctx.stroke();
+
+  // Bordo del primo tocco: pieno
+  ctx.strokeStyle = hexToRgba(color, 0.9);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  const nearY = bull ? yTop : yBottom;
+  ctx.moveTo(x, nearY);
+  ctx.lineTo(plotRight, nearY);
+  ctx.stroke();
+
+  // Etichetta a destra, vicino alla scala dei prezzi: e' li' che si
+  // guarda, e resta visibile anche col grafico spostato
+  const label = `FVG ${f.sizePct.toFixed(1)}%`;
+  ctx.font = 'bold 9px system-ui, sans-serif';
+  const tw = ctx.measureText(label).width;
+  ctx.fillStyle = color;
+  ctx.textBaseline = bull ? 'bottom' : 'top';
+  ctx.fillText(label, plotRight - tw - 4, nearY + (bull ? -2 : 2));
+  ctx.restore();
 }
 
 /**

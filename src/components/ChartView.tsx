@@ -23,6 +23,7 @@ import AddToWatchlistButton from './AddToWatchlistButton';
 import LightweightChart, {
   type ChartFormation,
   type ChartGap,
+  type ChartFvg,
 } from './LightweightChart';
 import ValuationCard from './ValuationCard';
 
@@ -67,6 +68,44 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1d');
   const [formation, setFormation] = useState<ChartFormation | null>(null);
   const [gaps, setGaps] = useState<ChartGap[]>([]);
+  const [fvgs, setFvgs] = useState<ChartFvg[]>([]);
+  // Preferenza ricordata nel browser: chi li spegne non vuole
+  // ritrovarseli accesi a ogni titolo
+  const [showFvg, setShowFvg] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('mmp.showFvg') === '0') setShowFvg(false);
+    } catch {
+      // archivio del browser non disponibile: resta acceso
+    }
+  }, []);
+  function toggleFvg() {
+    const next = !showFvg;
+    setShowFvg(next);
+    try {
+      localStorage.setItem('mmp.showFvg', next ? '1' : '0');
+    } catch {
+      // nulla da fare
+    }
+  }
+
+  // Fair value gap aperti: solo sul giornaliero
+  useEffect(() => {
+    let cancel = false;
+    setFvgs([]);
+    if (timeframe !== '1d') return;
+    fetch(`/api/fvg/${encodeURIComponent(ticker)}`)
+      .then((r) => r.text())
+      .then((text) => {
+        if (cancel || !text) return;
+        const d = JSON.parse(text);
+        setFvgs(d.fvgs ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      cancel = true;
+    };
+  }, [ticker, timeframe]);
 
   // Figure riconosciute: solo sul giornaliero, dove la rilevazione ha
   // senso. Sugli altri intervalli non si disegna nulla.
@@ -344,6 +383,20 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
             <span className="text-xs text-brand-muted hidden sm:inline">
               {tfLabel(timeframe)}
             </span>
+            {timeframe === '1d' && (
+              <button
+                onClick={toggleFvg}
+                className={`ml-auto px-3 py-1 rounded text-xs font-semibold transition border ${
+                  showFvg
+                    ? 'border-sky-400/60 text-sky-300 bg-sky-400/10'
+                    : 'border-brand-border text-brand-muted'
+                }`}
+                title="Fair value gap ancora aperti"
+                aria-pressed={showFvg}
+              >
+                FVG{fvgs.length > 0 && ` · ${fvgs.length}`}
+              </button>
+            )}
           </div>
 
           <LightweightChart
@@ -356,6 +409,7 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
             theme="dark"
             formation={formation}
             gaps={gaps}
+            fvgs={showFvg && timeframe === '1d' ? fvgs : []}
           />
 
           <ValuationCard ticker={ticker} />
