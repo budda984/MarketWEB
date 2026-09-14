@@ -101,11 +101,19 @@ export async function buildValuation(
  * soprattutto quando il suggerimento e' sbagliato.
  */
 export function valuationDbErrorMessage(message: string): string {
-  if (/source/i.test(message) && /schema cache|column/i.test(message)) {
-    return `Manca la colonna 'source' in 'valuations' (migration 017), oppure Supabase non ha ancora ricaricato lo schema. Errore: ${message}`;
+  // "schema cache" significa che nel database la colonna c'e' ma il
+  // livello API non l'ha ancora vista: rifare la migration non serve
+  if (/schema cache/i.test(message)) {
+    return `Supabase non ha ancora ricaricato lo schema. Esegui: notify pgrst, 'reload schema'; oppure riavvia il progetto. Errore: ${message}`;
   }
-  if (/schema cache|does not exist/i.test(message)) {
-    return `Tabella o colonna non trovata. Errore: ${message}`;
+  if (/column .* does not exist/i.test(message)) {
+    return `Colonna mancante in 'valuations': verifica le migration 015 e 017. Errore: ${message}`;
+  }
+  if (/relation .* does not exist/i.test(message)) {
+    return `Tabella mancante: verifica le migration. Errore: ${message}`;
+  }
+  if (/row-level security|violates row-level/i.test(message)) {
+    return `Scrittura rifiutata dalle regole di accesso: probabilmente manca la chiave di servizio fra le variabili d'ambiente. Errore: ${message}`;
   }
   return message;
 }
