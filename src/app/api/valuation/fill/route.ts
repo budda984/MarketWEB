@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { yahooDownloadMany } from '@/lib/yahoo';
-import { MARKETS } from '@/lib/tickers';
+import { valuationUniverse } from '@/lib/valuation-universe';
 import { fetchTickerCikMap } from '@/lib/sec';
 import { sleep } from '@/lib/valuation';
 import { buildValuation, valuationDbErrorMessage } from '@/lib/valuation-row';
@@ -22,13 +22,7 @@ export const maxDuration = 60;
  * piu' volte.
  */
 
-// Mercati azionari fuori dagli USA: niente crypto, cambi, materie prime
-// ed ETF, che un bilancio non ce l'hanno
-const NON_US_EQUITY = [
-  'Italia', 'Francia', 'Germania', 'Olanda', 'UK', 'Spagna', 'Svizzera',
-  'Svezia', 'Danimarca', 'Norvegia', 'Finlandia', 'Austria', 'Belgio',
-  'Portogallo', 'Polonia', 'Turchia', 'Grecia', 'Giappone',
-] as const;
+
 export async function POST(req: Request) {
   const supabase = createClient();
   const {
@@ -43,19 +37,8 @@ export async function POST(req: Request) {
   const admin = createAdminClient();
 
   try {
-    const universe = Array.from(
-      new Set([
-        ...((MARKETS['S&P 500'] as readonly string[]) ?? []),
-        ...((MARKETS['NASDAQ'] as readonly string[]) ?? []),
-        ...NON_US_EQUITY.flatMap(
-          (m) => (MARKETS[m] as readonly string[] | undefined) ?? []
-        ),
-      ])
-    );
+    const universe = valuationUniverse();
 
-    const map = await fetchTickerCikMap();
-
-    // Lotti piccoli: il collo di bottiglia e' il ritmo consentito dalla SEC
     const BATCH = 12;
     const chunk = universe.slice(offset, offset + BATCH);
     if (chunk.length === 0) {
@@ -67,7 +50,10 @@ export async function POST(req: Request) {
       });
     }
 
-    const candlesMap = await yahooDownloadMany(chunk, '5y', '1d', 6);
+    const [map, candlesMap] = await Promise.all([
+      fetchTickerCikMap(),
+      yahooDownloadMany(chunk, '5y', '1d', 6),
+    ]);
     const rows: Array<Record<string, unknown>> = [];
     const reportRows: Array<Record<string, unknown>> = [];
     let skipped = 0;

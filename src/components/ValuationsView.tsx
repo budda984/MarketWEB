@@ -42,6 +42,7 @@ export default function ValuationsView({ onOpenTicker }: Props) {
   const [opportunities, setOpportunities] = useState<Row[]>([]);
   const [withCaution, setWithCaution] = useState<Row[]>([]);
   const [analyzed, setAnalyzed] = useState(0);
+  const [universeSize, setUniverseSize] = useState(0);
   const [lastScan, setLastScan] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [filling, setFilling] = useState(false);
@@ -71,6 +72,7 @@ export default function ValuationsView({ onOpenTicker }: Props) {
       setOpportunities(d.opportunities ?? []);
       setWithCaution(d.withCaution ?? []);
       setAnalyzed(d.analyzed ?? 0);
+      setUniverseSize(d.universeSize ?? 0);
       setLastScan(d.lastScan ?? null);
     } catch (e) {
       setErr(String(e));
@@ -133,11 +135,31 @@ export default function ValuationsView({ onOpenTicker }: Props) {
           <Scale className="w-5 h-5 text-brand-green" />
           <span className="font-semibold">Occasioni per valutazione</span>
           <span className="text-xs text-brand-muted">
-            {analyzed} titoli in archivio
+            {universeSize > 0
+              ? `${analyzed} titoli su ${universeSize}`
+              : `${analyzed} titoli in archivio`}
           </span>
         </div>
 
         <LastScan at={lastScan} staleAfterHours={480} />
+
+        {universeSize > 0 && (
+          <div className="space-y-1">
+            <div className="h-1.5 bg-brand-border rounded overflow-hidden">
+              <div
+                className="h-full bg-brand-green transition-all"
+                style={{
+                  width: `${Math.min(100, (analyzed / universeSize) * 100)}%`,
+                }}
+              />
+            </div>
+            <div className="text-xs text-brand-muted break-words">
+              {analyzed >= universeSize
+                ? 'Archivio completo: si aggiorna da solo ogni ora.'
+                : `L'archivio si riempie da solo, circa 40 titoli all'ora. Il pulsante qui sotto serve solo ad accelerare.`}
+            </div>
+          </div>
+        )}
 
         <button
           onClick={fill}
@@ -151,7 +173,7 @@ export default function ValuationsView({ onOpenTicker }: Props) {
           ) : (
             <span className="flex items-center justify-center gap-1.5">
               <Play className="w-3.5 h-3.5" />
-              {analyzed === 0 ? 'Costruisci archivio' : 'Aggiorna archivio'}
+              {analyzed === 0 ? 'Costruisci subito' : 'Accelera ora'}
             </span>
           )}
         </button>
@@ -189,9 +211,10 @@ export default function ValuationsView({ onOpenTicker }: Props) {
         <div className="card p-8 text-center space-y-2">
           <div className="text-4xl">⚖️</div>
           <div className="text-sm text-brand-muted break-words">
-            Archivio vuoto. Premi <strong>Costruisci archivio</strong> per
-            analizzare i bilanci: SEC per i titoli USA, Yahoo per gli altri
-            mercati.
+            Archivio vuoto. Si riempie da solo nel giro di un paio di
+            giorni: bilanci SEC per i titoli USA, Yahoo per gli altri
+            mercati. Con <strong>Costruisci subito</strong> lo fai partire
+            ora, tenendo la pagina aperta.
           </div>
         </div>
       )}

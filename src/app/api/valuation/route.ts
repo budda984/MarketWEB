@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { valuationDbErrorMessage } from '@/lib/valuation-row';
+import { valuationUniverse } from '@/lib/valuation-universe';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -95,6 +96,7 @@ export async function GET(req: Request) {
     .maybeSingle();
 
   return NextResponse.json({
+    universeSize: valuationUniverse().length,
     solid: solidData ?? [],
     solidTotal: solidTotal ?? 0,
     opportunities,
