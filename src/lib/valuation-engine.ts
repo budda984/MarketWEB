@@ -7,6 +7,13 @@
  * una coda sola: se i tre lavorassero in modo diverso, la copertura non
  * tornerebbe mai.
  *
+ * I TITOLI CHE NON SI RIESCONO A VALUTARE
+ * Vanno segnati in archivio come non valutabili, con il motivo. Senza
+ * quella riga resterebbero nell'elenco dei mancanti, e siccome la coda
+ * parte da li', ogni giro riproverebbe sempre gli stessi: il motore
+ * girerebbe a vuoto e la copertura non arriverebbe mai in fondo.
+ * Vengono riprovati dopo MAX_AGE_DAYS come tutti gli altri.
+ *
  * NIENTE PUNTATORE DI AVANZAMENTO
  * A ogni giro si ricalcola cosa manca: prima i titoli che nell'archivio
  * non ci sono, poi quelli piu' vecchi di MAX_AGE_DAYS, dal piu' stantio.
@@ -43,6 +50,20 @@ export type BatchOutcome =
       /** Titoli che hanno sollevato un errore, con il motivo */
       failures: Array<{ ticker: string; error: string }>;
     };
+
+/**
+ * Riga segnaposto per un titolo che non si e' potuto valutare: tiene il
+ * motivo e, soprattutto, lo toglie dalla coda dei mancanti.
+ */
+function notEvaluable(ticker: string, reason: string): Record<string, unknown> {
+  return {
+    ticker,
+    verdict_level: 'non_valutabile',
+    verdict_headline: 'Non valutabile',
+    verdict_reasons: [reason],
+    updated_at: new Date().toISOString(),
+  };
+}
 
 export async function runValuationBatch(
   admin: SupabaseClient,
@@ -143,15 +164,15 @@ export async function runValuationBatch(
     try {
       built = await buildValuation(ticker, candles, map.get(ticker));
     } catch (e) {
-      failures.push({
-        ticker,
-        error: e instanceof Error ? e.message : 'errore sconosciuto',
-      });
+      const error = e instanceof Error ? e.message : 'errore sconosciuto';
+      failures.push({ ticker, error });
+      rows.push(notEvaluable(ticker, error));
       skipped++;
       continue;
     }
 
     if (!built.ok) {
+      rows.push(notEvaluable(ticker, built.reason));
       skipped++;
       await sleep(150);
       continue;

@@ -43,6 +43,7 @@ export default function ValuationsView({ onOpenTicker }: Props) {
   const [withCaution, setWithCaution] = useState<Row[]>([]);
   const [analyzed, setAnalyzed] = useState(0);
   const [universeSize, setUniverseSize] = useState(0);
+  const [notEvaluable, setNotEvaluable] = useState(0);
   const [lastScan, setLastScan] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [filling, setFilling] = useState(false);
@@ -74,6 +75,7 @@ export default function ValuationsView({ onOpenTicker }: Props) {
       setWithCaution(d.withCaution ?? []);
       setAnalyzed(d.analyzed ?? 0);
       setUniverseSize(d.universeSize ?? 0);
+      setNotEvaluable(d.notEvaluable ?? 0);
       setLastScan(d.lastScan ?? null);
     } catch (e) {
       setErr(String(e));
@@ -221,7 +223,11 @@ export default function ValuationsView({ onOpenTicker }: Props) {
             </div>
             <div className="text-xs text-brand-muted break-words">
               {analyzed >= universeSize
-                ? 'Archivio completo: si mantiene aggiornato da solo.'
+                ? `Archivio completo: si mantiene aggiornato da solo.${
+                    notEvaluable > 0
+                      ? ` ${notEvaluable} titoli senza bilanci utilizzabili.`
+                      : ''
+                  }`
                 : auto
                   ? `Analisi in corso mentre resti qui · ${auto}`
                   : "L'archivio si riempie mentre tieni aperta questa sezione."}

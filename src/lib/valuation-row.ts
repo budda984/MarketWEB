@@ -33,19 +33,40 @@ export async function buildValuation(
   let source: ValuationSource = 'sec';
   let yahooDebug: YahooValuationDebug | undefined;
 
+  // Le due fonti vanno distinte anche negli errori: sapere quale delle
+  // due ha ceduto e' meta' della diagnosi
   if (secEntry) {
-    f = await fetchFundamentals(ticker, secEntry.cik, candles);
+    try {
+      f = await fetchFundamentals(ticker, secEntry.cik, candles);
+    } catch (e) {
+      throw new Error(
+        `bilanci SEC: ${e instanceof Error ? e.message : 'errore'}`
+      );
+    }
   }
 
   if (!f) {
-    const y = await fetchFundamentalsYahoo(ticker, candles);
+    let y: Awaited<ReturnType<typeof fetchFundamentalsYahoo>>;
+    try {
+      y = await fetchFundamentalsYahoo(ticker, candles);
+    } catch (e) {
+      throw new Error(
+        `bilanci Yahoo: ${e instanceof Error ? e.message : 'errore'}`
+      );
+    }
     if (!y.ok) return { ok: false, reason: y.reason };
     f = y.f;
     source = 'yahoo';
     yahooDebug = y.debug;
   }
 
-  const v = buildVerdict(f);
+  let v: ReturnType<typeof buildVerdict>;
+  try {
+    v = buildVerdict(f);
+  } catch (e) {
+    throw new Error(`giudizio: ${e instanceof Error ? e.message : 'errore'}`);
+  }
+
   const row = {
     ticker,
     price: f.price,

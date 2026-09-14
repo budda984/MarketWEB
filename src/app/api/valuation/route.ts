@@ -88,6 +88,13 @@ export async function GET(req: Request) {
     .from('valuations')
     .select('*', { count: 'exact', head: true });
 
+  // I titoli senza bilanci utilizzabili occupano una riga in archivio:
+  // vanno contati a parte, altrimenti sembrano valutazioni vere
+  const { count: notEvaluable } = await supabase
+    .from('valuations')
+    .select('*', { count: 'exact', head: true })
+    .eq('verdict_level', 'non_valutabile');
+
   const { data: lastRow } = await supabase
     .from('valuations')
     .select('updated_at')
@@ -102,6 +109,7 @@ export async function GET(req: Request) {
     opportunities,
     withCaution,
     analyzed: total ?? 0,
+    notEvaluable: notEvaluable ?? 0,
     lastScan: lastRow?.updated_at ?? null,
   });
 }
