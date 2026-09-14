@@ -43,12 +43,25 @@ export async function GET(req: Request) {
     60
   );
 
-  const result = await runValuationBatch(createAdminClient(), {
-    budgetMs,
-    maxTickers,
-  });
-  if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: 500 });
+  // Senza questo blocco un'eccezione qualsiasi diventa un 500 senza
+  // corpo, e chi chiama (pg_net, il cron) registra solo il codice: il
+  // motivo del guasto resta invisibile
+  try {
+    const result = await runValuationBatch(createAdminClient(), {
+      budgetMs,
+      maxTickers,
+    });
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
+    return NextResponse.json(result);
+  } catch (e) {
+    return NextResponse.json(
+      {
+        error: e instanceof Error ? e.message : 'errore sconosciuto',
+        where: 'runValuationBatch',
+      },
+      { status: 500 }
+    );
   }
-  return NextResponse.json(result);
 }

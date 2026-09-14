@@ -105,7 +105,13 @@ export default function ValuationsView({ onOpenTicker }: Props) {
         const text = await r.text();
         if (stop || !text) return;
         const d = JSON.parse(text);
-        if (d.error) return;
+        if (d.error) {
+          // Un errore inghiottito qui fa sembrare il motore fermo senza
+          // spiegazione: meglio mostrarlo e smettere di riprovare
+          setErr(d.error);
+          setAuto(null);
+          return;
+        }
         setAnalyzed(d.covered ?? 0);
         setUniverseSize(d.universeSize ?? 0);
         setAuto(d.done ? null : `${d.remaining} titoli da analizzare`);
@@ -117,8 +123,9 @@ export default function ValuationsView({ onOpenTicker }: Props) {
         // Una pausa fra un lotto e l'altro: il lavoro pesante e' gia'
         // stato fatto dal server, non serve incalzare
         timer = setTimeout(giro, 3000);
-      } catch {
+      } catch (e) {
         // Rete assente o richiesta interrotta: si riprova piu' tardi
+        setAuto(`Riprovo fra poco (${e instanceof Error ? e.message : 'errore'})`);
         timer = setTimeout(giro, 30000);
       }
     }

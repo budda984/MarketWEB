@@ -24,9 +24,19 @@ export async function POST() {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const result = await runValuationBatch(createAdminClient());
-  if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: 500 });
+  try {
+    const result = await runValuationBatch(createAdminClient());
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
+    return NextResponse.json(result);
+  } catch (e) {
+    return NextResponse.json(
+      {
+        error: e instanceof Error ? e.message : 'errore sconosciuto',
+        where: 'runValuationBatch',
+      },
+      { status: 500 }
+    );
   }
-  return NextResponse.json(result);
 }

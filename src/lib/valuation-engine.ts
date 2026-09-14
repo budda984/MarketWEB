@@ -148,11 +148,20 @@ export async function runValuationBatch(
     }
   }
   if (reportRows.length > 0) {
+    // Un upsert non puo' toccare due volte la stessa riga nello stesso
+    // comando: se un titolo riporta due volte lo stesso trimestre, senza
+    // questa deduplicazione l'intero salvataggio fallisce
+    const unici = new Map<string, (typeof reportRows)[number]>();
+    for (const r of reportRows) unici.set(`${r.ticker}|${r.period_end}`, r);
+
     // I trimestri sono un di piu': se falliscono non si perde la
     // valutazione, gia' salvata sopra
     await admin
-      .from('quarterly_reports')
-      .upsert(reportRows, { onConflict: 'ticker,period_end' });
+      .from('earnings_reports')
+      .upsert(Array.from(unici.values()), {
+        onConflict: 'ticker,period_end',
+        ignoreDuplicates: false,
+      });
   }
 
   const newlyCovered = rows.filter((r) => !seen.has(r.ticker as string)).length;
