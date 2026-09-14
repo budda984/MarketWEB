@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 /**
- * GET /api/cron/valuations
+ * GET /api/cron/valuations?budget=20000&max=15
  * Header: Authorization: Bearer <CRON_SECRET>
  *
  * Un giro del motore delle valutazioni (vedi lib/valuation-engine.ts).
@@ -16,6 +16,13 @@ export const maxDuration = 60;
  * esterno, che sul piano gratuito e' l'unico modo di andare piu' spesso
  * di una volta al giorno. L'endpoint e' lo stesso: cambia solo chi lo
  * chiama e quanto spesso.
+ *
+ * DURATA DEL GIRO
+ * Chi chiama decide quanto deve durare, perche' ogni chiamante ha un
+ * tempo di attesa diverso: il cron di Vercel aspetta fino al minuto,
+ * pg_net di Supabase di suo aspetta due secondi e va istruito. Un giro
+ * che dura piu' dell'attesa di chi lo ha chiamato viene annullato a
+ * meta', e il lavoro fatto va perso.
  */
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
@@ -24,7 +31,22 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const result = await runValuationBatch(createAdminClient());
+  const url = new URL(req.url);
+  // Il limite di Vercel resta 60 secondi: oltre, la funzione muore e
+  // non si salva nulla
+  const budgetMs = Math.min(
+    Math.max(Number(url.searchParams.get('budget') ?? 48_000), 5_000),
+    55_000
+  );
+  const maxTickers = Math.min(
+    Math.max(Number(url.searchParams.get('max') ?? 40), 1),
+    60
+  );
+
+  const result = await runValuationBatch(createAdminClient(), {
+    budgetMs,
+    maxTickers,
+  });
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 500 });
   }
