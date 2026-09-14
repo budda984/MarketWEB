@@ -30,7 +30,7 @@
     },
     {
       "path": "/api/cron/valuations",
-      "schedule": "20 * * * *"
+      "schedule": "0 3 * * *"
     }
   ]
 }

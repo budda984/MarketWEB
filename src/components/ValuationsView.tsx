@@ -89,19 +89,14 @@ export default function ValuationsView({ onOpenTicker }: Props) {
     setFilling(true);
     setErr(null);
     setProgress('Avvio…');
-    let offset = 0;
-    let guard = 0;
     let saved = 0;
+    let guard = 0;
     try {
-      // I limiti della SEC impongono un ritmo lento: servono molte
-      // chiamate, e l'archivio si costruisce progressivamente. Con i
-      // mercati non USA l'universo e' di circa 850 titoli, 12 per giro.
-      while (guard++ < 150) {
-        const r = await fetch('/api/valuation/fill', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ offset }),
-        });
+      // Ogni giro riparte dai titoli ancora scoperti, quindi basta
+      // richiamarlo finche' non dice di aver finito. Il limite serve a
+      // non lasciare un ciclo infinito se qualcosa va storto.
+      while (guard++ < 60) {
+        const r = await fetch('/api/valuation/catchup', { method: 'POST' });
         const text = await r.text();
         if (!text) {
           setErr('Nessuna risposta dal server.');
@@ -112,14 +107,16 @@ export default function ValuationsView({ onOpenTicker }: Props) {
           setErr(d.error);
           break;
         }
-        saved += d.stats.saved ?? 0;
+        saved += d.saved ?? 0;
+        setAnalyzed(d.covered ?? 0);
+        setUniverseSize(d.universeSize ?? 0);
         setProgress(
-          `${d.stats.processedUpTo}/${d.stats.universeSize} titoli · ${saved} valutati`
+          d.done
+            ? `Completato · ${saved} titoli valutati`
+            : `${d.covered}/${d.universeSize} titoli · ${d.remaining} da fare`
         );
-        if (d.done || d.nextOffset == null) break;
-        offset = d.nextOffset;
+        if (d.done) break;
       }
-      setProgress(`Completato · ${saved} titoli valutati`);
       await load();
     } catch (e) {
       setErr(String(e));
@@ -156,7 +153,7 @@ export default function ValuationsView({ onOpenTicker }: Props) {
             <div className="text-xs text-brand-muted break-words">
               {analyzed >= universeSize
                 ? 'Archivio completo: si aggiorna da solo ogni ora.'
-                : `L'archivio si riempie da solo, circa 40 titoli all'ora. Il pulsante qui sotto serve solo ad accelerare.`}
+                : `L'archivio si riempie da solo a ogni giro del motore. Il pulsante qui sotto serve ad accelerare.`}
             </div>
           </div>
         )}
@@ -196,7 +193,8 @@ export default function ValuationsView({ onOpenTicker }: Props) {
           <div className="text-xs text-brand-muted break-words">
             La SEC limita il ritmo delle richieste, quindi l&apos;analisi dei
             titoli USA procede lentamente; quelli degli altri mercati vanno più
-            veloci. Tieni la pagina aperta finché non finisce.
+            veloci. Puoi chiudere quando vuoi: il motore riprende da dove sei
+            arrivato.
           </div>
         )}
       </div>
