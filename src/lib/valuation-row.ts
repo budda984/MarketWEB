@@ -93,13 +93,19 @@ export async function buildValuation(
   return { ok: true, source, f, row, yahooDebug };
 }
 
-/** Messaggio leggibile per gli errori di salvataggio piu' comuni */
+/**
+ * Messaggio leggibile per gli errori di salvataggio piu' comuni.
+ *
+ * Il testo originale resta sempre in coda: un suggerimento che copre
+ * l'errore vero fa perdere piu' tempo di quanto ne faccia risparmiare,
+ * soprattutto quando il suggerimento e' sbagliato.
+ */
 export function valuationDbErrorMessage(message: string): string {
   if (/source/i.test(message) && /schema cache|column/i.test(message)) {
-    return "Manca la colonna 'source' in 'valuations': esegui la migration 017_valuation_source.sql.";
+    return `Manca la colonna 'source' in 'valuations' (migration 017), oppure Supabase non ha ancora ricaricato lo schema. Errore: ${message}`;
   }
   if (/schema cache|does not exist/i.test(message)) {
-    return "La tabella 'valuations' non esiste ancora: esegui la migration 012_valuation.sql.";
+    return `Tabella o colonna non trovata. Errore: ${message}`;
   }
   return message;
 }
