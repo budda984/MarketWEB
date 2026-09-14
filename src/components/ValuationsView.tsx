@@ -48,6 +48,7 @@ export default function ValuationsView({ onOpenTicker }: Props) {
   const [filling, setFilling] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [auto, setAuto] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -84,6 +85,56 @@ export default function ValuationsView({ onOpenTicker }: Props) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Motore in sottofondo: finche' questa sezione e' aperta e restano
+  // titoli scoperti, macina un lotto alla volta senza che tu prema
+  // niente. Si ferma quando la scheda passa in secondo piano, per non
+  // consumare batteria e dati sul telefono.
+  useEffect(() => {
+    if (filling) return;
+    if (universeSize === 0 || analyzed >= universeSize) return;
+
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function giro() {
+      timer = null;
+      if (stop || document.hidden) return;
+      try {
+        const r = await fetch('/api/valuation/catchup', { method: 'POST' });
+        const text = await r.text();
+        if (stop || !text) return;
+        const d = JSON.parse(text);
+        if (d.error) return;
+        setAnalyzed(d.covered ?? 0);
+        setUniverseSize(d.universeSize ?? 0);
+        setAuto(d.done ? null : `${d.remaining} titoli da analizzare`);
+        if (d.done) {
+          setAuto(null);
+          await load();
+          return;
+        }
+        // Una pausa fra un lotto e l'altro: il lavoro pesante e' gia'
+        // stato fatto dal server, non serve incalzare
+        timer = setTimeout(giro, 3000);
+      } catch {
+        // Rete assente o richiesta interrotta: si riprova piu' tardi
+        timer = setTimeout(giro, 30000);
+      }
+    }
+
+    timer = setTimeout(giro, 1500);
+    const onVisible = () => {
+      if (!document.hidden && !stop && timer == null) giro();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      stop = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [analyzed, universeSize, filling, load]);
 
   async function fill() {
     setFilling(true);
@@ -152,8 +203,10 @@ export default function ValuationsView({ onOpenTicker }: Props) {
             </div>
             <div className="text-xs text-brand-muted break-words">
               {analyzed >= universeSize
-                ? 'Archivio completo: si aggiorna da solo ogni ora.'
-                : `L'archivio si riempie da solo a ogni giro del motore. Il pulsante qui sotto serve ad accelerare.`}
+                ? 'Archivio completo: si mantiene aggiornato da solo.'
+                : auto
+                  ? `Analisi in corso mentre resti qui · ${auto}`
+                  : "L'archivio si riempie mentre tieni aperta questa sezione."}
             </div>
           </div>
         )}
