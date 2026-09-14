@@ -40,6 +40,8 @@ export type BatchOutcome =
       universeSize: number;
       remaining: number;
       elapsedMs: number;
+      /** Titoli che hanno sollevato un errore, con il motivo */
+      failures: Array<{ ticker: string; error: string }>;
     };
 
 export async function runValuationBatch(
@@ -90,14 +92,32 @@ export async function runValuationBatch(
       universeSize: universe.length,
       remaining: 0,
       elapsedMs: Date.now() - t0,
+      failures: [],
     };
   }
 
   const chunk = queue.slice(0, maxTickers);
-  const [map, candlesMap] = await Promise.all([
-    fetchTickerCikMap(),
-    yahooDownloadMany(chunk, '5y', '1d', 8),
-  ]);
+
+  // Le due fonti comuni al lotto: se cadono qui, cade tutto il giro, ed
+  // e' utile sapere quale delle due
+  let map: Awaited<ReturnType<typeof fetchTickerCikMap>>;
+  let candlesMap: Awaited<ReturnType<typeof yahooDownloadMany>>;
+  try {
+    map = await fetchTickerCikMap();
+  } catch (e) {
+    return {
+      ok: false,
+      error: `anagrafica SEC: ${e instanceof Error ? e.message : 'errore'}`,
+    };
+  }
+  try {
+    candlesMap = await yahooDownloadMany(chunk, '5y', '1d', 8);
+  } catch (e) {
+    return {
+      ok: false,
+      error: `storico prezzi: ${e instanceof Error ? e.message : 'errore'}`,
+    };
+  }
 
   const rows: Array<Record<string, unknown>> = [];
   const reportRows: Array<Record<string, unknown>> = [];
@@ -105,6 +125,8 @@ export async function runValuationBatch(
   let skipped = 0;
   let fromSec = 0;
   let fromYahoo = 0;
+
+  const failures: Array<{ ticker: string; error: string }> = [];
 
   for (const ticker of chunk) {
     if (Date.now() - t0 > budgetMs) break;
@@ -114,7 +136,21 @@ export async function runValuationBatch(
       skipped++;
       continue;
     }
-    const built = await buildValuation(ticker, candles, map.get(ticker));
+
+    // Un singolo titolo con dati inattesi non deve far cadere il giro:
+    // si annota, si va avanti, e il motivo finisce nella risposta
+    let built: Awaited<ReturnType<typeof buildValuation>>;
+    try {
+      built = await buildValuation(ticker, candles, map.get(ticker));
+    } catch (e) {
+      failures.push({
+        ticker,
+        error: e instanceof Error ? e.message : 'errore sconosciuto',
+      });
+      skipped++;
+      continue;
+    }
+
     if (!built.ok) {
       skipped++;
       await sleep(150);
@@ -181,5 +217,6 @@ export async function runValuationBatch(
     universeSize: universe.length,
     remaining: Math.max(0, queue.length - processed),
     elapsedMs: Date.now() - t0,
+    failures,
   };
 }

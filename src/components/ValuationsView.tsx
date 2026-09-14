@@ -114,6 +114,17 @@ export default function ValuationsView({ onOpenTicker }: Props) {
         }
         setAnalyzed(d.covered ?? 0);
         setUniverseSize(d.universeSize ?? 0);
+        // I titoli caduti non fermano il giro, ma vanno mostrati:
+        // altrimenti restano fuori dall'archivio senza spiegazione
+        const ko: Array<{ ticker: string; error: string }> = d.failures ?? [];
+        if (ko.length > 0) {
+          setErr(
+            `Non analizzabili: ${ko
+              .slice(0, 3)
+              .map((f) => `${f.ticker} (${f.error})`)
+              .join(', ')}${ko.length > 3 ? ` e altri ${ko.length - 3}` : ''}`
+          );
+        }
         setAuto(d.done ? null : `${d.remaining} titoli da analizzare`);
         if (d.done) {
           setAuto(null);
