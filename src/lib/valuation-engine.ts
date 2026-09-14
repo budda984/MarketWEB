@@ -61,6 +61,11 @@ function notEvaluable(ticker: string, reason: string): Record<string, unknown> {
     verdict_level: 'non_valutabile',
     verdict_headline: 'Non valutabile',
     verdict_reasons: [reason],
+    // Va valorizzata esplicitamente: in un salvataggio a lotti le
+    // colonne sono l'unione di quelle presenti in tutte le righe, e
+    // dove il valore manca finisce NULL invece del predefinito. Con
+    // 'source' dichiarata NOT NULL, l'intero lotto verrebbe rifiutato.
+    source: 'none',
     updated_at: new Date().toISOString(),
   };
 }

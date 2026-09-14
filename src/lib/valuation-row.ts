@@ -112,6 +112,11 @@ export function valuationDbErrorMessage(message: string): string {
   if (/relation .* does not exist/i.test(message)) {
     return `Tabella mancante: verifica le migration. Errore: ${message}`;
   }
+  // Non e' la migration a mancare: e' una riga che non valorizza una
+  // colonna obbligatoria. Mandare a rifare la migration fa perdere tempo
+  if (/not-null constraint|null value in column/i.test(message)) {
+    return `Una riga non valorizza una colonna obbligatoria: è un difetto del codice, non una migration mancante. Errore: ${message}`;
+  }
   if (/row-level security|violates row-level/i.test(message)) {
     return `Scrittura rifiutata dalle regole di accesso: probabilmente manca la chiave di servizio fra le variabili d'ambiente. Errore: ${message}`;
   }
