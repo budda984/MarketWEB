@@ -14,6 +14,7 @@ import {
   type Coordinate,
 } from 'lightweight-charts';
 import type { OHLCV } from '@/lib/yahoo';
+import { levelLabel, type FormationKind } from '@/lib/formations';
 import { Pencil, Trash2, Save, Loader2, Square, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 // ============================================================================
@@ -944,7 +945,13 @@ function drawFormation(
     ctx.setLineDash([]);
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = color;
-    ctx.fillText(`collo ${f.neckline.toFixed(2)}`, a.x + 4, a.y - 4);
+    // Nei doppi e tripli quella linea e' il supporto o la resistenza
+    // toccata piu' volte, non un collo
+    ctx.fillText(
+      `${levelLabel(f.kind as FormationKind)} ${f.neckline.toFixed(2)}`,
+      a.x + 4,
+      a.y - 4
+    );
   }
 
   ctx.restore();

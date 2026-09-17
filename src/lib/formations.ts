@@ -21,8 +21,10 @@ import { findPivots, type Pivot } from './patterns';
 export type FormationKind =
   | 'IHS'
   | 'DOUBLE_BOTTOM'
+  | 'TRIPLE_BOTTOM'
   | 'HS'
   | 'DOUBLE_TOP'
+  | 'TRIPLE_TOP'
   | 'FALLING_WEDGE'
   | 'RISING_WEDGE'
   | 'BULL_FLAG'
@@ -33,8 +35,10 @@ export type FormationState = 'forming' | 'right_shoulder' | 'confirmed';
 export const FORMATION_LABELS: Record<FormationKind, string> = {
   IHS: 'Testa e spalle rovesciato',
   DOUBLE_BOTTOM: 'Doppio minimo',
+  TRIPLE_BOTTOM: 'Triplo minimo',
   HS: 'Testa e spalle',
   DOUBLE_TOP: 'Doppio massimo',
+  TRIPLE_TOP: 'Triplo massimo',
   FALLING_WEDGE: 'Cuneo discendente',
   RISING_WEDGE: 'Cuneo ascendente',
   BULL_FLAG: 'Bandiera rialzista',
@@ -44,8 +48,10 @@ export const FORMATION_LABELS: Record<FormationKind, string> = {
 export const FORMATION_DIRECTION: Record<FormationKind, FormationDirection> = {
   IHS: 'bullish',
   DOUBLE_BOTTOM: 'bullish',
+  TRIPLE_BOTTOM: 'bullish',
   HS: 'bearish',
   DOUBLE_TOP: 'bearish',
+  TRIPLE_TOP: 'bearish',
   FALLING_WEDGE: 'bullish',
   RISING_WEDGE: 'bearish',
   BULL_FLAG: 'bullish',
@@ -53,20 +59,49 @@ export const FORMATION_DIRECTION: Record<FormationKind, FormationDirection> = {
 };
 
 /**
+ * Doppi e tripli massimi o minimi: figure fatte di tocchi ripetuti sullo
+ * stesso livello. Non hanno linea del collo, e si completano quando il
+ * tocco finale e' formato, non quando il prezzo rompe qualcosa.
+ */
+export function isMultiTouch(kind: FormationKind): boolean {
+  return (
+    kind === 'DOUBLE_TOP' ||
+    kind === 'DOUBLE_BOTTOM' ||
+    kind === 'TRIPLE_TOP' ||
+    kind === 'TRIPLE_BOTTOM'
+  );
+}
+
+/**
+ * Come chiamare il livello di riferimento della figura. Nei doppi e
+ * tripli e' il livello dei tocchi, cioe' la resistenza o il supporto
+ * che sta reggendo: chiamarlo collo sarebbe sbagliato.
+ */
+export function levelLabel(kind: FormationKind): string {
+  if (kind === 'DOUBLE_TOP' || kind === 'TRIPLE_TOP') return 'resistenza';
+  if (kind === 'DOUBLE_BOTTOM' || kind === 'TRIPLE_BOTTOM') return 'supporto';
+  return 'collo';
+}
+
+/**
  * Le etichette cambiano con la figura: parlare di "spalla destra" per un
  * doppio minimo non ha senso.
  */
 export function stateLabel(kind: FormationKind, state: FormationState): string {
+  if (isMultiTouch(kind)) {
+    const triple = kind === 'TRIPLE_TOP' || kind === 'TRIPLE_BOTTOM';
+    const point =
+      kind === 'DOUBLE_TOP' || kind === 'TRIPLE_TOP' ? 'massimo' : 'minimo';
+    if (state === 'forming') return `${triple ? 'Terzo' : 'Secondo'} ${point} in corso`;
+    return `${triple ? 'Terzo' : 'Secondo'} ${point} formato`;
+  }
   if (state === 'confirmed') return 'Linea del collo rotta';
   if (state === 'forming') return 'In formazione';
   if (kind === 'FALLING_WEDGE' || kind === 'RISING_WEDGE')
     return 'Cuneo in compressione';
   if (kind === 'BULL_FLAG' || kind === 'BEAR_FLAG')
     return 'Consolidamento maturo';
-  if (kind === 'IHS' || kind === 'HS') return 'Spalla destra completata';
-  return kind === 'DOUBLE_TOP'
-    ? 'Secondo massimo formato'
-    : 'Secondo minimo formato';
+  return 'Spalla destra completata';
 }
 
 export const STATE_LABELS: Record<FormationState, string> = {
@@ -326,6 +361,84 @@ function linreg(
   return { slope, intercept, r2, at: (x: number) => slope * x + intercept };
 }
 
+/**
+ * Raccoglie i tocchi consecutivi su uno stesso livello, andando a
+ * ritroso dall'ultimo: sono i due o tre minimi (o massimi) che formano
+ * la figura, con gli estremi opposti che li separano.
+ *
+ * Il tocco piu' recente e' il punto reale piu' basso (o piu' alto) del
+ * tratto finale, non l'ultimo pivot confermato: se il prezzo e' poi
+ * sceso oltre, il livello ha ceduto e la figura non c'e' piu'.
+ */
+function collectTouches(
+  candles: OHLCV[],
+  pivots: Pivot[],
+  lastIdx: number,
+  o: Opts,
+  side: 'low' | 'high'
+): { points: Pivot[]; between: Array<{ idx: number; price: number }> } | null {
+  const isLow = side === 'low';
+
+  // Il tocco finale: estremo reale dopo l'ultimo pivot opposto
+  const lastPivot = pivots.filter((p) => p.idx <= lastIdx).pop();
+  if (!lastPivot) return null;
+
+  const extreme = isLow
+    ? troughBetween(candles, Math.max(0, lastPivot.idx - 1), lastIdx)
+    : peakOnly(candles, Math.max(0, lastPivot.idx - 1), lastIdx);
+  if (!extreme) return null;
+
+  const level = extreme.price;
+  const touches: Pivot[] = [{ ...lastPivot, idx: extreme.idx, price: extreme.price }];
+  const between: Array<{ idx: number; price: number }> = [];
+
+  // A ritroso: ogni tocco precedente deve stare sullo stesso livello,
+  // essere abbastanza distante nel tempo e avere in mezzo un rimbalzo
+  for (let i = pivots.length - 1; i >= 0 && touches.length < 3; i--) {
+    const cand = pivots[i];
+    const next = touches[touches.length - 1];
+    if (cand.idx >= next.idx - MIN_BARS_BETWEEN_EXTREMES) continue;
+
+    if (Math.abs(cand.price - level) / level > o.levelTolerance) continue;
+
+    const mid = isLow
+      ? peakBetween(candles, cand.idx, next.idx)
+      : valleyBetween(candles, cand.idx, next.idx);
+    if (!mid) continue;
+
+    // Il rimbalzo intermedio deve essere reale, altrimenti i due tocchi
+    // sono lo stesso movimento visto due volte
+    const swing = isLow
+      ? (mid.price - level) / level
+      : (level - mid.price) / level;
+    if (swing < PIVOT_PROMINENCE_MIN) continue;
+
+    touches.push(cand);
+    between.push(mid);
+  }
+
+  if (touches.length < 2) return null;
+
+  // Il piu' vecchio dei tocchi deve avere alle spalle il movimento che
+  // la figura dovrebbe invertire
+  const first = touches[touches.length - 1];
+  const span = lastIdx - first.idx;
+  if (span < o.durationMin || span > o.durationMax) return null;
+
+  const prominenceOk = isLow
+    ? prominence(candles, first.idx, 25) >= PIVOT_PROMINENCE_MIN
+    : prominenceHigh(candles, first.idx, 25) >= PIVOT_PROMINENCE_MIN;
+  if (!prominenceOk) return null;
+
+  const priorOk = isLow
+    ? hasPriorDecline(candles, first.idx, 30, PRIOR_DECLINE_MIN)
+    : hasPriorRise(candles, first.idx, 30, PRIOR_DECLINE_MIN);
+  if (!priorOk) return null;
+
+  // Raccolti a ritroso: si riporta tutto in ordine cronologico
+  return { points: touches.reverse(), between: between.reverse() };
+}
+
 export function detectFormations(
   ticker: string,
   candles: OHLCV[],
@@ -475,96 +588,75 @@ export function detectFormations(
   }
 
   // ------------------------------------------------------------------
-  // DOPPIO MINIMO
+  // DOPPIO E TRIPLO MINIMO
   //
-  // Due minimi allo stesso livello separati da un picco significativo,
-  // preceduti da una discesa. Il secondo minimo non deve scendere sotto
-  // il primo in modo apprezzabile: altrimenti non e' un doppio minimo,
-  // e' una discesa che continua.
+  // Due o tre minimi allo stesso livello, separati da risalite
+  // significative e preceduti da una discesa.
+  //
+  // NIENTE LINEA DEL COLLO
+  // Qui la figura non si conferma rompendo il massimo intermedio: si
+  // completa quando il tocco finale sul supporto e' formato. Quello e'
+  // il momento in cui il livello ha retto un'altra volta, ed e' li' che
+  // serve l'avviso. Aspettare la rottura del massimo intermedio
+  // significherebbe segnalare a movimento gia' avvenuto.
+  //
+  // Il livello di riferimento e' quindi il supporto stesso, cioe' la
+  // media dei tocchi, non un collo.
   // ------------------------------------------------------------------
-  for (let i = lows.length - 1; i >= 0; i--) {
-    const l1 = lows[i];
-    const span = lastIdx - l1.idx;
-    if (span < o.durationMin || span > o.durationMax) continue;
+  {
+    const touches = collectTouches(candles, lows, lastIdx, o, 'low');
+    if (touches && touches.points.length >= 2) {
+      const { points: tp, between } = touches;
+      const level = tp.reduce((s2, t) => s2 + t.price, 0) / tp.length;
+      const topBetween = Math.max(...between.map((b) => b.price));
+      const depthPct = ((topBetween - level) / topBetween) * 100;
+      const last = tp[tp.length - 1];
+      const lastIsForming = lastIdx - last.idx <= o.rightBars;
 
-    if (prominence(candles, l1.idx, 25) < PIVOT_PROMINENCE_MIN) continue;
-    if (!hasPriorDecline(candles, l1.idx, 30, PRIOR_DECLINE_MIN)) continue;
+      if (depthPct >= o.minDepthPct) {
+        const triple = tp.length >= 3;
+        const words = ['Primo', 'Secondo', 'Terzo', 'Quarto'];
+        const points: FormationPoint[] = [];
+        tp.forEach((t, k) => {
+          const isLast = k === tp.length - 1;
+          points.push({
+            time: candles[t.idx].t,
+            price: t.price,
+            label: `${words[k] ?? ''} minimo${
+              isLast && lastIsForming ? ' (in corso)' : ''
+            }`.trim(),
+          });
+          const mid = between[k];
+          if (mid && k < tp.length - 1) {
+            points.push({
+              time: candles[mid.idx].t,
+              price: mid.price,
+              label: 'Massimo',
+            });
+          }
+        });
 
-    const peak = peakBetween(candles, l1.idx, lastIdx);
-    if (!peak) continue;
-    const neckline = peak.price;
-    const depthPct = ((neckline - l1.price) / neckline) * 100;
-    if (depthPct < o.minDepthPct) continue;
-
-    // Il secondo minimo e' il punto PIU' BASSO dopo il picco, non
-    // l'ultimo pivot che rientrava nella tolleranza. Prendere un pivot
-    // intermedio quando il prezzo e' poi sceso ancora significa
-    // segnalare una figura che nel frattempo si e' rotta.
-    const trough = troughBetween(candles, peak.idx, lastIdx);
-    if (!trough) continue;
-    // Due minimi troppo ravvicinati sono un'oscillazione, non una figura
-    if (trough.idx - l1.idx < MIN_BARS_BETWEEN_EXTREMES) continue;
-
-    // Il minimo reale deve stare allo stesso livello del primo: e' la
-    // condizione che definisce un doppio minimo. Se e' sceso sotto oltre
-    // la tolleranza, il supporto ha ceduto e la figura non c'e'.
-    const levelDiff = Math.abs(trough.price - l1.price) / l1.price;
-    if (levelDiff > o.levelTolerance) continue;
-
-    // E' gia' confermato come pivot, oppure si sta ancora formando?
-    const l2 = lows.find(
-      (p) => p.idx > peak.idx && Math.abs(p.idx - trough.idx) <= 2
-    );
-    const troughIsRecent = lastIdx - trough.idx <= o.rightBars;
-
-    // Simmetria: il secondo minimo non deve arrivare troppo presto
-    if (l2) {
-      const leftSpan = peak.idx - l1.idx;
-      const rightSpan = l2.idx - peak.idx;
-      const avg = (leftSpan + rightSpan) / 2;
-      if (avg > 0 && Math.abs(leftSpan - rightSpan) / avg > TIME_ASYMMETRY_MAX) {
-        continue;
+        out.push({
+          ticker,
+          kind: triple ? 'TRIPLE_BOTTOM' : 'DOUBLE_BOTTOM',
+          direction: 'bullish',
+          // Completata appena il tocco finale non e' piu' in corso
+          state: lastIsForming ? 'forming' : 'confirmed',
+          points,
+          // Il livello dei tocchi, non un collo
+          neckline: level,
+          necklineFrom: { time: candles[tp[0].idx].t, price: level },
+          necklineTo: { time: candles[lastIdx].t, price: level },
+          price,
+          distanceToNecklinePct: ((level - price) / price) * 100,
+          depthPct,
+          // Primo ostacolo sopra: il massimo piu' alto fra i tocchi
+          target: topBetween,
+          barsSpan: lastIdx - tp[0].idx,
+          lastDate: isoDate(candles[lastIdx].t),
+        });
       }
     }
-
-    let state: FormationState;
-    if (l2 && price > neckline) {
-      state = 'confirmed';
-    } else if (l2 && !troughIsRecent) {
-      // Minimo confermato e ormai alle spalle: struttura completa
-      state = 'right_shoulder';
-    } else {
-      // Il minimo si sta ancora formando adesso
-      state = 'forming';
-    }
-
-    const points: FormationPoint[] = [
-      { time: candles[l1.idx].t, price: l1.price, label: 'Primo minimo' },
-      { time: candles[peak.idx].t, price: peak.price, label: 'Massimo' },
-    ];
-    points.push({
-      time: candles[trough.idx].t,
-      price: trough.price,
-      label: troughIsRecent ? 'Secondo minimo (in corso)' : 'Secondo minimo',
-    });
-
-    out.push({
-      ticker,
-      kind: 'DOUBLE_BOTTOM',
-      direction: 'bullish',
-      state,
-      points,
-      neckline,
-      necklineFrom: { time: candles[peak.idx].t, price: neckline },
-      necklineTo: { time: candles[lastIdx].t, price: neckline },
-      price,
-      distanceToNecklinePct: ((neckline - price) / price) * 100,
-      depthPct,
-      target: neckline + (neckline - l1.price),
-      barsSpan: span,
-      lastDate: isoDate(candles[lastIdx].t),
-    });
-    break;
   }
 
   // ------------------------------------------------------------------
@@ -688,74 +780,64 @@ export function detectFormations(
   }
 
   // ------------------------------------------------------------------
-  // DOPPIO MASSIMO
+  // DOPPIO E TRIPLO MASSIMO
   //
-  // Due massimi allo stesso livello separati da un minimo significativo,
-  // preceduti da una salita. Si conferma rompendo quel minimo.
+  // Lo specchio dei minimi: tocchi ripetuti su una resistenza, preceduti
+  // da una salita. Anche qui niente linea del collo: la figura e'
+  // completa quando il tocco finale e' formato.
   // ------------------------------------------------------------------
-  for (let i = highs.length - 1; i >= 0; i--) {
-    const h1 = highs[i];
-    const span = lastIdx - h1.idx;
-    if (span < o.durationMin || span > o.durationMax) continue;
+  {
+    const touches = collectTouches(candles, highs, lastIdx, o, 'high');
+    if (touches && touches.points.length >= 2) {
+      const { points: tp, between } = touches;
+      const level = tp.reduce((s2, t) => s2 + t.price, 0) / tp.length;
+      const lowBetween = Math.min(...between.map((b) => b.price));
+      const depthPct = ((level - lowBetween) / level) * 100;
+      const last = tp[tp.length - 1];
+      const lastIsForming = lastIdx - last.idx <= o.rightBars;
 
-    if (prominenceHigh(candles, h1.idx, 25) < PIVOT_PROMINENCE_MIN) continue;
-    if (!hasPriorRise(candles, h1.idx, 30, PRIOR_DECLINE_MIN)) continue;
+      if (depthPct >= o.minDepthPct) {
+        const triple = tp.length >= 3;
+        const words = ['Primo', 'Secondo', 'Terzo', 'Quarto'];
+        const points: FormationPoint[] = [];
+        tp.forEach((t, k) => {
+          const isLast = k === tp.length - 1;
+          points.push({
+            time: candles[t.idx].t,
+            price: t.price,
+            label: `${words[k] ?? ''} massimo${
+              isLast && lastIsForming ? ' (in corso)' : ''
+            }`.trim(),
+          });
+          const mid = between[k];
+          if (mid && k < tp.length - 1) {
+            points.push({
+              time: candles[mid.idx].t,
+              price: mid.price,
+              label: 'Minimo',
+            });
+          }
+        });
 
-    const valley = valleyBetween(candles, h1.idx, lastIdx);
-    if (!valley) continue;
-    const neckline = valley.price;
-    const depthPct = ((h1.price - neckline) / h1.price) * 100;
-    if (depthPct < o.minDepthPct) continue;
-
-    // Il secondo massimo e' il punto piu' alto dopo il minimo intermedio
-    const crest = peakOnly(candles, valley.idx, lastIdx);
-    if (!crest) continue;
-    if (crest.idx - h1.idx < MIN_BARS_BETWEEN_EXTREMES) continue;
-
-    const levelDiff = Math.abs(crest.price - h1.price) / h1.price;
-    if (levelDiff > o.levelTolerance) continue;
-
-    const h2 = highs.find(
-      (p) => p.idx > valley.idx && Math.abs(p.idx - crest.idx) <= 2
-    );
-    const crestIsRecent = lastIdx - crest.idx <= o.rightBars;
-
-    let state: FormationState;
-    if (h2 && price < neckline) {
-      state = 'confirmed';
-    } else if (h2 && !crestIsRecent) {
-      state = 'right_shoulder';
-    } else {
-      state = 'forming';
+        out.push({
+          ticker,
+          kind: triple ? 'TRIPLE_TOP' : 'DOUBLE_TOP',
+          direction: 'bearish',
+          state: lastIsForming ? 'forming' : 'confirmed',
+          points,
+          neckline: level,
+          necklineFrom: { time: candles[tp[0].idx].t, price: level },
+          necklineTo: { time: candles[lastIdx].t, price: level },
+          price,
+          distanceToNecklinePct: ((level - price) / price) * 100,
+          depthPct,
+          // Primo ostacolo sotto: il minimo piu' basso fra i tocchi
+          target: lowBetween,
+          barsSpan: lastIdx - tp[0].idx,
+          lastDate: isoDate(candles[lastIdx].t),
+        });
+      }
     }
-
-    const points: FormationPoint[] = [
-      { time: candles[h1.idx].t, price: h1.price, label: 'Primo massimo' },
-      { time: candles[valley.idx].t, price: valley.price, label: 'Minimo' },
-      {
-        time: candles[crest.idx].t,
-        price: crest.price,
-        label: crestIsRecent ? 'Secondo massimo (in corso)' : 'Secondo massimo',
-      },
-    ];
-
-    out.push({
-      ticker,
-      kind: 'DOUBLE_TOP',
-      direction: 'bearish',
-      state,
-      points,
-      neckline,
-      necklineFrom: { time: candles[valley.idx].t, price: neckline },
-      necklineTo: { time: candles[lastIdx].t, price: neckline },
-      price,
-      distanceToNecklinePct: ((neckline - price) / price) * 100,
-      depthPct,
-      target: neckline - (h1.price - neckline),
-      barsSpan: span,
-      lastDate: isoDate(candles[lastIdx].t),
-    });
-    break;
   }
 
   // ------------------------------------------------------------------

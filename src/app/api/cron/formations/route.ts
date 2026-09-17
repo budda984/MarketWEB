@@ -2,7 +2,13 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { yahooDownloadMany } from '@/lib/yahoo';
 import { MARKETS, getMarketForTicker } from '@/lib/tickers';
-import { detectFormations, FORMATION_LABELS, type Formation } from '@/lib/formations';
+import {
+  detectFormations,
+  FORMATION_LABELS,
+  isMultiTouch,
+  levelLabel,
+  type Formation,
+} from '@/lib/formations';
 import { sendTelegramMessage } from '@/lib/telegram';
 
 export const runtime = 'nodejs';
@@ -132,7 +138,10 @@ export async function GET(req: Request) {
       const parts: string[] = [];
 
       if (breakouts.length > 0) {
-        parts.push('🚨 <b>Rottura confermata</b>');
+        // Il titolo resta generico: per il testa e spalle significa
+        // rottura del collo, per i doppi e tripli che il tocco finale sul
+        // livello e' formato. Ogni riga poi lo specifica.
+        parts.push('🚨 <b>Figure completate</b>');
         parts.push(
           ...breakouts
             .sort((a, b) => b.depthPct - a.depthPct)
@@ -140,9 +149,12 @@ export async function GET(req: Request) {
             .map((f) => {
               const label = FORMATION_LABELS[f.kind];
               const dir = f.direction === 'bearish' ? '↓' : '↑';
+              const what = isMultiTouch(f.kind)
+                ? `${levelLabel(f.kind)} ${f.neckline.toFixed(2)} tenuta`
+                : `rottura ${f.neckline.toFixed(2)}`;
               return (
                 `${dir} <b>${f.ticker}</b> ${label}\n` +
-                `   ${f.price.toFixed(2)} · livello ${f.neckline.toFixed(2)} · obiettivo ${f.target.toFixed(2)}`
+                `   ${f.price.toFixed(2)} · ${what} · obiettivo ${f.target.toFixed(2)}`
               );
             })
         );

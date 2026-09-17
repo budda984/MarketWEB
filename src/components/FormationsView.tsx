@@ -14,6 +14,7 @@ import {
   FORMATION_DIRECTION,
   type FormationKind,
   type FormationState,
+  levelLabel,
 } from '@/lib/formations';
 
 type Formation = {
@@ -220,7 +221,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
           <>
             <div className="grid grid-cols-3 gap-2">
               <Stat
-                label="Collo rotto"
+                label="Confermate"
                 value={counts.confirmed}
                 color="text-brand-green"
               />
@@ -283,7 +284,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
                   className="input text-xs py-1"
                 >
                   <option value="all">Tutti</option>
-                  <option value="confirmed">Collo rotto</option>
+                  <option value="confirmed">Confermate</option>
                   <option value="right_shoulder">Struttura completata</option>
                   <option value="forming">In formazione</option>
                 </select>
@@ -361,7 +362,7 @@ export default function FormationsView({ onOpenTicker }: Props) {
                     </span>
                   </div>
                   <div className="text-xs text-brand-muted font-mono mt-0.5 break-words">
-                    {Number(f.price).toFixed(2)} · collo{' '}
+                    {Number(f.price).toFixed(2)} · {levelLabel(f.kind)}{' '}
                     {Number(f.neckline).toFixed(2)}
                     {f.state !== 'confirmed' && (
                       <>
@@ -409,15 +410,30 @@ export default function FormationsView({ onOpenTicker }: Props) {
           figura si intravede, ma potrebbe non completarsi.
         </p>
         <p className="break-words">
-          <strong>Struttura completata:</strong> il secondo minimo si è
-          formato allo stesso livello del primo — spalla destra nel testa e
-          spalle, secondo minimo nel doppio minimo — e il prezzo risale
-          verso la linea del collo.
+          <strong>Struttura completata:</strong> la spalla destra del testa e
+          spalle si è formata allo stesso livello della sinistra, e il prezzo
+          risale verso la linea del collo.
         </p>
         <p className="break-words">
-          <strong>Collo rotto:</strong> il prezzo ha superato il livello di
-          conferma. L&apos;obiettivo indicato è l&apos;altezza della figura
-          proiettata oltre il collo — una convenzione, non una previsione.
+          <strong>Confermate:</strong> per il testa e spalle e per le altre
+          figure con linea del collo significa che il prezzo l&apos;ha
+          superata. Per i doppi e tripli massimi o minimi significa
+          un&apos;altra cosa: che il tocco finale sul livello è formato.
+        </p>
+        <p className="break-words">
+          I <strong>doppi e tripli massimi o minimi</strong> non hanno linea
+          del collo. Sono tocchi ripetuti sullo stesso livello, e la figura è
+          completa quando l&apos;ultimo tocco si è formato: è lì che il
+          supporto o la resistenza ha appena retto un&apos;altra volta, ed è
+          lì che arriva l&apos;avviso. Aspettare la rottura del massimo o del
+          minimo intermedio vorrebbe dire segnalare a movimento avvenuto.
+          L&apos;obiettivo indicato è il primo ostacolo in mezzo alla figura,
+          non una proiezione.
+        </p>
+        <p className="break-words">
+          Il prezzo di conseguenza torna spesso sul livello senza invertire:
+          molti doppi massimi finiscono con la resistenza sfondata al rialzo.
+          È il costo di essere avvisati subito.
         </p>
         <p className="break-words">
           Molte figure in formazione non si completeranno: è il costo del
@@ -441,17 +457,16 @@ export default function FormationsView({ onOpenTicker }: Props) {
           e la figura viene scartata.
         </p>
         <p className="break-words">
-          Le figure ribassiste — testa e spalle e doppio massimo — seguono
-          la logica speculare: richiedono una salita che le precede e si
-          confermano rompendo la linea del collo verso il basso. Il colore
-          sul grafico distingue la direzione.
+          Le figure ribassiste seguono la logica speculare: richiedono una
+          salita che le precede. Il colore sul grafico distingue la
+          direzione.
         </p>
         <p className="break-words">
           Perché una figura sia considerata valida servono: un movimento che
-          la precede, minimi da cui il prezzo è poi risalito in modo
-          apprezzabile, una linea del collo pressoché orizzontale fra i due
-          picchi intermedi, e due lati di durata confrontabile. Senza questi
-          vincoli qualunque oscillazione può somigliare a una figura.
+          la precede, estremi da cui il prezzo è poi ripartito in modo
+          apprezzabile, tocchi allineati sullo stesso livello e abbastanza
+          distanziati nel tempo. Senza questi vincoli qualunque oscillazione
+          può somigliare a una figura.
         </p>
       </div>
     </div>
