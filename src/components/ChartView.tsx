@@ -24,7 +24,14 @@ import LightweightChart, {
   type ChartFormation,
   type ChartGap,
   type ChartFvg,
+  type ChartCandleMark,
 } from './LightweightChart';
+import {
+  detectCandlePatterns,
+  PATTERN_LABELS,
+  PATTERN_ABBR,
+  type CandlePattern,
+} from '@/lib/candle-patterns';
 import ValuationCard from './ValuationCard';
 
 type Props = {
@@ -72,6 +79,54 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
   // Preferenza ricordata nel browser: chi li spegne non vuole
   // ritrovarseli accesi a ogni titolo
   const [showFvg, setShowFvg] = useState(true);
+  const [showPatterns, setShowPatterns] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('mmp.showPatterns') === '1') setShowPatterns(true);
+    } catch {
+      // archivio del browser non disponibile: restano spenti
+    }
+  }, []);
+  function togglePatterns() {
+    const next = !showPatterns;
+    setShowPatterns(next);
+    try {
+      localStorage.setItem('mmp.showPatterns', next ? '1' : '0');
+    } catch {
+      // nulla da fare
+    }
+  }
+
+  // I pattern si calcolano dalle stesse candele gia' caricate: nessuna
+  // richiesta, e funzionano su qualsiasi intervallo temporale
+  const patterns: CandlePattern[] = useMemo(
+    () =>
+      showPatterns && data?.candles?.length
+        ? detectCandlePatterns(data.candles)
+        : [],
+    [data?.candles, showPatterns]
+  );
+
+  const candleMarks: ChartCandleMark[] = useMemo(() => {
+    // Piu' pattern sulla stessa candela diventano un marcatore solo:
+    // sovrapposti sarebbero illeggibili
+    const perTime = new Map<number, CandlePattern[]>();
+    for (const p of patterns) {
+      const list = perTime.get(p.time);
+      if (list) list.push(p);
+      else perTime.set(p.time, [p]);
+    }
+    return Array.from(perTime.entries()).map(([time, list]) => {
+      const bull = list.filter((p) => p.direction === 'bullish').length;
+      const bear = list.filter((p) => p.direction === 'bearish').length;
+      return {
+        time,
+        text: list.map((p) => PATTERN_ABBR[p.kind]).join('+'),
+        direction:
+          bull > bear ? 'bullish' : bear > bull ? 'bearish' : 'neutral',
+      } as ChartCandleMark;
+    });
+  }, [patterns]);
   useEffect(() => {
     try {
       if (localStorage.getItem('mmp.showFvg') === '0') setShowFvg(false);
@@ -397,6 +452,18 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
                 FVG{fvgs.length > 0 && ` · ${fvgs.length}`}
               </button>
             )}
+            <button
+              onClick={togglePatterns}
+              className={`${timeframe === '1d' ? '' : 'ml-auto'} px-3 py-1 rounded text-xs font-semibold transition border ${
+                showPatterns
+                  ? 'border-amber-400/60 text-amber-300 bg-amber-400/10'
+                  : 'border-brand-border text-brand-muted'
+              }`}
+              title="Pattern a candele"
+              aria-pressed={showPatterns}
+            >
+              Candele{patterns.length > 0 && ` · ${patterns.length}`}
+            </button>
           </div>
 
           <LightweightChart
@@ -410,7 +477,12 @@ export default function ChartView({ ticker, onTickerChange }: Props) {
             formation={formation}
             gaps={gaps}
             fvgs={showFvg && timeframe === '1d' ? fvgs : []}
+            candleMarks={candleMarks}
           />
+
+          {showPatterns && (
+            <RecentPatternsCard patterns={patterns} candles={data.candles} />
+          )}
 
           <ValuationCard ticker={ticker} />
 
@@ -787,4 +859,81 @@ function Stat({
       {sub && <div className="text-xs text-brand-muted mt-0.5">{sub}</div>}
     </div>
   );
+}
+
+/**
+ * Gli ultimi pattern in forma leggibile: sul grafico ci sono solo le
+ * sigle, che da sole non dicono niente.
+ */
+function RecentPatternsCard({
+  patterns,
+  candles,
+}: {
+  patterns: CandlePattern[];
+  candles: { t: number }[];
+}) {
+  // Le ultime dieci sedute: piu' indietro non serve a chi guarda ora
+  const cutoff = candles.length > 10 ? candles[candles.length - 10].t : 0;
+  const recent = patterns.filter((p) => p.time >= cutoff).reverse();
+
+  return (
+    <div className="card p-3 sm:p-5">
+      <h3 className="text-xs sm:text-sm font-semibold text-brand-muted mb-2 uppercase tracking-wide">
+        Pattern recenti
+      </h3>
+      {recent.length === 0 ? (
+        <div className="text-xs text-brand-muted">
+          Nessun pattern nelle ultime dieci candele.
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {recent.map((p, i) => (
+            <div
+              key={`${p.time}-${p.kind}-${i}`}
+              className="flex items-baseline gap-2 flex-wrap text-xs"
+            >
+              <span className="font-mono text-brand-muted flex-shrink-0">
+                {new Date(p.time * 1000).toLocaleDateString('it-IT', {
+                  day: '2-digit',
+                  month: '2-digit',
+                })}
+              </span>
+              <span
+                className={`font-semibold ${
+                  p.direction === 'bullish'
+                    ? 'text-brand-green'
+                    : p.direction === 'bearish'
+                      ? 'text-brand-red'
+                      : 'text-brand-muted'
+                }`}
+              >
+                {PATTERN_LABELS[p.kind]}
+              </span>
+              <span className="text-brand-muted">
+                {p.sizeAtr.toFixed(1)}× ATR
+                {p.volumeRatio != null &&
+                  ` · volume ${p.volumeRatio.toFixed(1)}×`}
+                {p.positionPct != null &&
+                  ` · ${positionWord(p.positionPct)} del range mensile`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="text-xs text-brand-muted mt-3 pt-2 border-t border-brand-border break-words">
+        Segnalati tutti, senza filtri di qualità: la maggior parte non
+        porta da nessuna parte. Un pattern rialzista in cima al range è
+        continuazione, non inversione.
+      </div>
+    </div>
+  );
+}
+
+/** Dove si trova la candela nel range recente, a parole */
+function positionWord(pct: number): string {
+  if (pct >= 80) return 'in cima';
+  if (pct >= 60) return 'parte alta';
+  if (pct >= 40) return 'metà';
+  if (pct >= 20) return 'parte bassa';
+  return 'sul fondo';
 }

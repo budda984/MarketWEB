@@ -12,6 +12,7 @@ import {
   type Time,
   type MouseEventParams,
   type Coordinate,
+  type SeriesMarker,
 } from 'lightweight-charts';
 import type { OHLCV } from '@/lib/yahoo';
 import { Pencil, Trash2, Save, Loader2, Square, TrendingUp, TrendingDown, Minus } from 'lucide-react';
@@ -86,6 +87,14 @@ export type ChartFvg = {
   sizePct: number;
 };
 
+/** Marcatore su una candela: pattern rilevato */
+export type ChartCandleMark = {
+  time: number;
+  /** Sigla mostrata sul grafico */
+  text: string;
+  direction: 'bullish' | 'bearish' | 'neutral';
+};
+
 type Props = {
   ticker: string;
   candles: OHLCV[];
@@ -94,6 +103,7 @@ type Props = {
   formation?: ChartFormation | null;
   gaps?: ChartGap[];
   fvgs?: ChartFvg[];
+  candleMarks?: ChartCandleMark[];
 };
 
 export default function LightweightChart({
@@ -104,6 +114,7 @@ export default function LightweightChart({
   formation = null,
   gaps = [],
   fvgs = [],
+  candleMarks = [],
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
