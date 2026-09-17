@@ -184,6 +184,14 @@ const PIVOT_PROMINENCE_MIN = 0.04;
 const MIN_BARS_SINCE_HEAD = 12;
 /** Sedute minime fra i due estremi di un doppio massimo o minimo. */
 const MIN_BARS_BETWEEN_EXTREMES = 12;
+/**
+ * Doppi e tripli: oltre queste sedute dall'ultimo tocco la figura non e'
+ * piu' attuale. Il momento utile e' quando il prezzo e' sul livello, non
+ * tre settimane dopo con il prezzo gia' altrove.
+ */
+const MULTI_TOUCH_MAX_AGE = 8;
+/** E oltre questa distanza dal livello il prezzo e' ormai scappato. */
+const MULTI_TOUCH_MAX_DISTANCE = 0.06;
 /** Quanto il prezzo deve essersi gia' allontanato dall'abbozzo di spalla. */
 const ROLLOVER_MIN = 0.015;
 
@@ -611,9 +619,16 @@ export function detectFormations(
       const topBetween = Math.max(...between.map((b) => b.price));
       const depthPct = ((topBetween - level) / topBetween) * 100;
       const last = tp[tp.length - 1];
-      const lastIsForming = lastIdx - last.idx <= o.rightBars;
+      const barsSince = lastIdx - last.idx;
+      const lastIsForming = barsSince <= o.rightBars;
+      // Figura ancora in gioco: tocco recente e prezzo ancora vicino al
+      // livello. Una figura vecchia con il prezzo lontano descrive
+      // qualcosa che e' gia' successo.
+      const fresh =
+        barsSince <= MULTI_TOUCH_MAX_AGE &&
+        Math.abs(price - level) / level <= MULTI_TOUCH_MAX_DISTANCE;
 
-      if (depthPct >= o.minDepthPct) {
+      if (depthPct >= o.minDepthPct && fresh) {
         const triple = tp.length >= 3;
         const words = ['Primo', 'Secondo', 'Terzo', 'Quarto'];
         const points: FormationPoint[] = [];
@@ -794,9 +809,16 @@ export function detectFormations(
       const lowBetween = Math.min(...between.map((b) => b.price));
       const depthPct = ((level - lowBetween) / level) * 100;
       const last = tp[tp.length - 1];
-      const lastIsForming = lastIdx - last.idx <= o.rightBars;
+      const barsSince = lastIdx - last.idx;
+      const lastIsForming = barsSince <= o.rightBars;
+      // Figura ancora in gioco: tocco recente e prezzo ancora vicino al
+      // livello. Una figura vecchia con il prezzo lontano descrive
+      // qualcosa che e' gia' successo.
+      const fresh =
+        barsSince <= MULTI_TOUCH_MAX_AGE &&
+        Math.abs(price - level) / level <= MULTI_TOUCH_MAX_DISTANCE;
 
-      if (depthPct >= o.minDepthPct) {
+      if (depthPct >= o.minDepthPct && fresh) {
         const triple = tp.length >= 3;
         const words = ['Primo', 'Secondo', 'Terzo', 'Quarto'];
         const points: FormationPoint[] = [];

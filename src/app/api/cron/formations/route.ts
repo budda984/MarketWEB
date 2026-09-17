@@ -61,6 +61,9 @@ export async function GET(req: Request) {
     // Novita' da segnalare
     const breakouts: Formation[] = [];
     const newlyForming: Formation[] = [];
+    // Doppi e tripli: il momento da segnalare e' il tocco sul livello,
+    // non un cambio di stato successivo
+    const onLevel: Formation[] = [];
 
     for (let i = 0; i < universe.length; i += CHUNK) {
       if (Date.now() - t0 > 42000) {
@@ -78,9 +81,15 @@ export async function GET(req: Request) {
           const key = `${f.ticker}|${f.kind}`;
           const before = prevState.get(key);
 
-          // Rottura: e' il momento operativo, quindi va segnalata sia se
-          // la figura era gia' nota sia se compare direttamente rotta
-          if (f.state === 'confirmed' && before !== 'confirmed') {
+          if (isMultiTouch(f.kind)) {
+            // Si segnala la prima volta che la figura compare, in
+            // qualunque stato: e' li' che il prezzo e' sul livello.
+            // Il passaggio successivo a 'confermata' non e' una notizia,
+            // il prezzo nel frattempo si e' gia' mosso.
+            if (!before) onLevel.push(f);
+          } else if (f.state === 'confirmed' && before !== 'confirmed') {
+            // Rottura: e' il momento operativo, quindi va segnalata sia
+            // se la figura era gia' nota sia se compare gia' rotta
             breakouts.push(f);
           } else if (!before && f.state !== 'confirmed') {
             newlyForming.push(f);
@@ -134,14 +143,35 @@ export async function GET(req: Request) {
     // Notifica
     // ------------------------------------------------------------------
     let telegramSent = 0;
-    if (breakouts.length > 0 || newlyForming.length > 0) {
+    if (breakouts.length > 0 || newlyForming.length > 0 || onLevel.length > 0) {
       const parts: string[] = [];
+
+      if (onLevel.length > 0) {
+        parts.push('🎯 <b>Prezzo sul livello</b>');
+        parts.push(
+          ...onLevel
+            .sort((a, b) => b.depthPct - a.depthPct)
+            .slice(0, 12)
+            .map((f) => {
+              const label = FORMATION_LABELS[f.kind];
+              const dir = f.direction === 'bearish' ? '↓' : '↑';
+              const dist = Math.abs(f.distanceToNecklinePct);
+              return (
+                `${dir} <b>${f.ticker}</b> ${label}\n` +
+                `   ${f.price.toFixed(2)} · ${levelLabel(f.kind)} ${f.neckline.toFixed(2)}` +
+                ` (${dist.toFixed(1)}%) · obiettivo ${f.target.toFixed(2)}`
+              );
+            })
+        );
+        if (onLevel.length > 12) parts.push(`… e altre ${onLevel.length - 12}`);
+        parts.push('');
+      }
 
       if (breakouts.length > 0) {
         // Il titolo resta generico: per il testa e spalle significa
         // rottura del collo, per i doppi e tripli che il tocco finale sul
         // livello e' formato. Ogni riga poi lo specifica.
-        parts.push('🚨 <b>Figure completate</b>');
+        parts.push('🚨 <b>Rottura del collo</b>');
         parts.push(
           ...breakouts
             .sort((a, b) => b.depthPct - a.depthPct)
@@ -149,12 +179,9 @@ export async function GET(req: Request) {
             .map((f) => {
               const label = FORMATION_LABELS[f.kind];
               const dir = f.direction === 'bearish' ? '↓' : '↑';
-              const what = isMultiTouch(f.kind)
-                ? `${levelLabel(f.kind)} ${f.neckline.toFixed(2)} tenuta`
-                : `rottura ${f.neckline.toFixed(2)}`;
               return (
                 `${dir} <b>${f.ticker}</b> ${label}\n` +
-                `   ${f.price.toFixed(2)} · ${what} · obiettivo ${f.target.toFixed(2)}`
+                `   ${f.price.toFixed(2)} · rottura ${f.neckline.toFixed(2)} · obiettivo ${f.target.toFixed(2)}`
               );
             })
         );
