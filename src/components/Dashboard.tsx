@@ -243,7 +243,9 @@ export default function Dashboard({
     const forti = deduped.filter((s) => s.strength === 3).length;
     const medi = deduped.filter((s) => s.strength === 2).length;
     const deboli = deduped.filter((s) => s.strength === 1).length;
-    return { forti, medi, deboli, tot: deduped.length };
+    // I record a forza zero sono componenti isolate, non segnali: fuori
+    // dal totale, altrimenti il conteggio in alto gonfia senza motivo
+    return { forti, medi, deboli, tot: forti + medi + deboli };
   }, [signals]);
 
   const sidebarContent = (

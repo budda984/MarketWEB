@@ -11,6 +11,7 @@ import {
   Target as TargetIcon,
   TrendingDown,
   TrendingUp,
+  Zap,
 } from 'lucide-react';
 import type { DbSignal } from '@/types/db';
 import { MARKETS, type MarketKey, getMarketForTicker } from '@/lib/tickers';
@@ -158,6 +159,9 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
       forti: filtered.filter((s) => s.strength === 3),
       medi: filtered.filter((s) => s.strength === 2),
       deboli: filtered.filter((s) => s.strength === 1),
+      // Una sola delle due condizioni: non e' un segnale, ma e' quello
+      // che precede il segnale
+      componenti: filtered.filter((s) => s.strength === 0),
     };
   }, [filtered]);
 
@@ -340,6 +344,16 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
           onOpenTicker={onOpenTicker}
         />
       )}
+      {groups.componenti.length > 0 && (
+        <Section
+          title="Solo una componente"
+          icon={<Zap className="w-4 h-4 text-brand-muted" />}
+          color="text-brand-muted"
+          items={groups.componenti}
+          onOpenTicker={onOpenTicker}
+        />
+      )}
+
       {groups.deboli.length > 0 && (
         <Section
           title="Deboli"

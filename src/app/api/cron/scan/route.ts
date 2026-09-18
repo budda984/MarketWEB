@@ -399,7 +399,9 @@ export async function GET(req: Request) {
 
     if (userSettings && userSettings.length > 0) {
       const tasks = userSettings.map(async (s) => {
-        const minStr = s.min_strength ?? 1;
+        // Mai sotto 1: da quando si salvano anche le componenti isolate,
+        // uno zero farebbe finire nelle notifiche roba che segnale non e'
+        const minStr = Math.max(1, s.min_strength ?? 1);
         const hma = allHma.filter((x) => x.strength >= minStr);
         const hs = allHs.filter((x) => x.pattern.strength >= minStr);
         const fl = allFlag.filter((x) => x.pattern.strength >= minStr);

@@ -123,6 +123,10 @@ export function evaluateSignal(
     }
   } else if (price > hmaNow) {
     details = `Sopra HMA ma HA non conferma`;
+  } else if (haBull && haFlipBarsAgo === 0) {
+    // Cambio colore arrivato prima dell'incrocio: non e' ancora un
+    // segnale, ma e' proprio l'anticipo che si vuole poter guardare
+    details = `Prima HA verde pulita, ancora sotto HMA`;
   } else {
     details = `Prezzo sotto HMA`;
   }
@@ -143,7 +147,22 @@ export function evaluateSignal(
 }
 
 /**
- * Scansione di più ticker. Filtra i segnali con strength >= minStrength.
+ * Una sola delle due componenti, appena scattata: non fa un segnale, ma
+ * va conservata lo stesso.
+ *
+ * Senza questo, un titolo che passa da rosso a verde mentre e' ancora
+ * sotto la Hull non verrebbe mai salvato, e il cambio colore — che
+ * arriva prima dell'incrocio — resterebbe invisibile proprio quando
+ * serve guardarlo.
+ */
+export function hasFreshComponent(s: Signal): boolean {
+  return s.haFlipBarsAgo === 0 || (s.crossedBarsAgo != null && s.crossedBarsAgo <= 1);
+}
+
+/**
+ * Scansione di più ticker. Tiene i segnali con strength >= minStrength,
+ * piu' quelli a forza zero in cui una delle due componenti e' appena
+ * scattata.
  */
 export async function scanTickers(
   candlesByTicker: Record<string, OHLCV[]>,
@@ -153,7 +172,8 @@ export async function scanTickers(
   const out: Signal[] = [];
   for (const [ticker, candles] of Object.entries(candlesByTicker)) {
     const s = evaluateSignal(ticker, candles, cfg);
-    if (s && s.strength >= minStrength) out.push(s);
+    if (!s) continue;
+    if (s.strength >= minStrength || hasFreshComponent(s)) out.push(s);
   }
   // Ordina: forza DESC, poi variazione DESC
   out.sort((a, b) => b.strength - a.strength || b.changePct - a.changePct);
