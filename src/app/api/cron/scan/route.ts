@@ -70,6 +70,7 @@ export async function GET(req: Request) {
     distancePct: number;
     crossedBarsAgo: number | null;
     haBullish: boolean;
+    haFlipBarsAgo: number | null;
     timestamp: number;
     market: string;
   }> = [];
@@ -115,6 +116,7 @@ export async function GET(req: Request) {
           distancePct: s.distancePct,
           crossedBarsAgo: s.crossedBarsAgo,
           haBullish: s.haBullish,
+          haFlipBarsAgo: s.haFlipBarsAgo,
           timestamp: s.timestamp,
           market,
         });
@@ -148,6 +150,7 @@ export async function GET(req: Request) {
       crossed_bars_ago: s.crossedBarsAgo,
       change_pct: s.changePct,
       ha_bullish: s.haBullish,
+      ha_flip_bars_ago: s.haFlipBarsAgo,
       details: s.details,
       signal_at: new Date(s.timestamp * 1000).toISOString(),
       status: 'ACTIVE',

@@ -10,6 +10,8 @@ export type DbSignal = {
   crossed_bars_ago: number | null;
   change_pct: number | null;
   ha_bullish: boolean | null;
+  /** Sedute dalla prima Heikin Ashi verde pulita della serie in corso */
+  ha_flip_bars_ago?: number | null;
   details: string | null;
   signal_at: string;
   status: 'ACTIVE' | 'TP_HIT' | 'SL_HIT' | 'TIME_STOP' | 'CLOSED';

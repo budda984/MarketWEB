@@ -11,6 +11,12 @@
  *  2 = MEDIO  → incrocio recente (3-5 candele) con HA bullish
  *  1 = DEBOLE → prezzo sopra HMA e HA bullish, ma incrocio più vecchio
  *  0 = NONE
+ *
+ * Le due condizioni restano legate nel segnale, ma vengono riportate
+ * anche separatamente: l'incrocio della Hull e il passaggio delle
+ * Heikin Ashi da rosse a verdi sono due eventi distinti, e vederli
+ * isolati serve a capire quale dei due manca. Il segnale vero, e quindi
+ * la notifica, resta la loro combinazione.
  */
 
 import type { OHLCV } from './yahoo';
@@ -27,6 +33,13 @@ export type Signal = {
   crossedBarsAgo: number | null;
   changePct: number; // variazione % giornaliera
   haBullish: boolean;
+  /**
+   * Sedute dalla PRIMA Heikin Ashi verde senza ombra inferiore della
+   * serie verde in corso: 0 significa che il cambio da rosso a verde è
+   * avvenuto con l'ultima candela. null se la serie verde non è in
+   * corso. È l'evento che Andrea vuole vedere isolato.
+   */
+  haFlipBarsAgo: number | null;
   details: string;
   timestamp: number; // unix seconds dell'ultima candela
 };
@@ -77,6 +90,15 @@ export function evaluateSignal(
   const haLast = ha[last];
   const haBull = isBullishHANoLowerWick(haLast);
 
+  // Da quante sedute dura la serie verde pulita in corso: si risale
+  // finché le candele restano conformi, e la prima e' il cambio
+  let haFlipBarsAgo: number | null = null;
+  if (haBull) {
+    let i = last;
+    while (i - 1 >= 0 && isBullishHANoLowerWick(ha[i - 1])) i--;
+    haFlipBarsAgo = last - i;
+  }
+
   const distancePct = ((price - hmaNow) / hmaNow) * 100;
   const prevClose = closes[last - 1] ?? price;
   const changePct = ((price - prevClose) / prevClose) * 100;
@@ -88,7 +110,10 @@ export function evaluateSignal(
   if (price > hmaNow && haBull) {
     if (crossBarsAgo != null && crossBarsAgo <= 1) {
       strength = 3;
-      details = `Incrocio fresco (${crossBarsAgo}d) + HA verde pulita`;
+      details =
+        haFlipBarsAgo === 0
+          ? `Incrocio fresco (${crossBarsAgo}d) + prima HA verde pulita`
+          : `Incrocio fresco (${crossBarsAgo}d) + HA verde pulita`;
     } else if (crossBarsAgo != null && crossBarsAgo <= 5) {
       strength = 2;
       details = `Incrocio ${crossBarsAgo}d fa + HA bullish`;
@@ -111,6 +136,7 @@ export function evaluateSignal(
     crossedBarsAgo: crossBarsAgo,
     changePct,
     haBullish: haBull,
+    haFlipBarsAgo,
     details,
     timestamp: candles[last].t,
   };

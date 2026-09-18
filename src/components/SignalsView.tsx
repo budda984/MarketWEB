@@ -38,6 +38,34 @@ type StrategyFilter =
   | 'PATTERN_TRIPLE_BOTTOM'
   | 'PATTERNS_ALL';
 
+/**
+ * Le due componenti che compongono il segnale HMA+HA:
+ *  - cross: il prezzo ha appena incrociato la Hull 50
+ *  - flip:  la prima Heikin Ashi verde senza ombra inferiore e' quella
+ *           di oggi, cioe' il cambio da rosso a verde e' appena avvenuto
+ *  - both:  tutte e due nella stessa seduta, che e' il segnale vero
+ */
+type ComponentFilter = 'all' | 'cross' | 'flip' | 'both';
+
+/** Incrocio avvenuto nell'ultima o penultima seduta */
+function isFreshCross(s: DbSignal): boolean {
+  return s.crossed_bars_ago != null && s.crossed_bars_ago <= 1;
+}
+
+/** La serie verde pulita e' iniziata con l'ultima candela */
+function isFreshFlip(s: DbSignal): boolean {
+  return s.ha_flip_bars_ago === 0;
+}
+
+function matchesComponent(s: DbSignal, f: ComponentFilter): boolean {
+  // I pattern non hanno queste componenti: restano fuori dai filtri
+  if (s.strategy !== 'HMA50_HA') return false;
+  if (f === 'cross') return isFreshCross(s);
+  if (f === 'flip') return isFreshFlip(s);
+  if (f === 'both') return isFreshCross(s) && isFreshFlip(s);
+  return true;
+}
+
 type PatternData = {
   type?: string;
   confidence?: number;
@@ -54,6 +82,8 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
   const [status, setStatus] = useState<StatusFilter>('all');
   const [strategy, setStrategy] = useState<StrategyFilter>('all');
   const [marketFilter, setMarketFilter] = useState<MarketKey | 'all'>('all');
+  // Le due componenti del segnale, filtrabili separatamente
+  const [component, setComponent] = useState<ComponentFilter>('all');
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -82,11 +112,32 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
         const m = s.market ?? getMarketForTicker(s.ticker);
         if (m !== marketFilter) return false;
       }
+      if (component !== 'all' && !matchesComponent(s, component)) return false;
       if (query && !s.ticker.toLowerCase().includes(query.toLowerCase()))
         return false;
       return true;
     });
-  }, [signals, strength, status, strategy, marketFilter, query]);
+  }, [signals, strength, status, strategy, marketFilter, component, query]);
+
+  // Conteggi delle componenti, sul complesso dei segnali
+  const componentCounts = useMemo(() => {
+    const seen = new Set<string>();
+    let cross = 0;
+    let flip = 0;
+    let both = 0;
+    for (const s of signals) {
+      const key = `${s.ticker}|${s.strategy}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (s.strategy !== 'HMA50_HA') continue;
+      const c = isFreshCross(s);
+      const f = isFreshFlip(s);
+      if (c) cross++;
+      if (f) flip++;
+      if (c && f) both++;
+    }
+    return { cross, flip, both };
+  }, [signals]);
 
   // Conteggi per mercato per il dropdown
   const marketCounts = useMemo(() => {
@@ -214,7 +265,34 @@ export default function SignalsView({ signals, onOpenTicker }: Props) {
           />
         </ScrollRow>
 
-        {/* Riga 3: strategy */}
+        {/* Riga 3: le due componenti del segnale, separate */}
+        <ScrollRow className="pt-2 border-t border-brand-border">
+          <span className="text-xs text-brand-muted mr-1 flex-shrink-0 self-center">
+            Componente:
+          </span>
+          <FilterBtn
+            active={component === 'all'}
+            onClick={() => setComponent('all')}
+            label="Tutte"
+          />
+          <FilterBtn
+            active={component === 'cross'}
+            onClick={() => setComponent('cross')}
+            label={`↗ Incrocio HMA (${componentCounts.cross})`}
+          />
+          <FilterBtn
+            active={component === 'flip'}
+            onClick={() => setComponent('flip')}
+            label={`🟢 Prima HA verde (${componentCounts.flip})`}
+          />
+          <FilterBtn
+            active={component === 'both'}
+            onClick={() => setComponent('both')}
+            label={`⚡ Entrambe oggi (${componentCounts.both})`}
+          />
+        </ScrollRow>
+
+        {/* Riga 4: strategy */}
         <ScrollRow className="pt-2 border-t border-brand-border">
           <span className="text-xs text-brand-muted mr-1 flex-shrink-0 self-center">
             Strategia:
@@ -369,6 +447,16 @@ function SignalRow({
             HMA+HA
           </span>
           {signal.status !== 'ACTIVE' && <StatusTag status={signal.status} />}
+          {/* Quale delle due componenti e' appena scattata: visibile
+              anche sul telefono, dove la descrizione e' nascosta */}
+          {signal.strategy === 'HMA50_HA' && isFreshCross(signal) && (
+            <span className="tag bg-sky-400/10 text-sky-300">↗ incrocio</span>
+          )}
+          {signal.strategy === 'HMA50_HA' && isFreshFlip(signal) && (
+            <span className="tag bg-brand-green/10 text-brand-green">
+              🟢 prima HA
+            </span>
+          )}
         </div>
         <div className="text-xs text-brand-muted mt-0.5 truncate">
           <span className="sm:hidden">
