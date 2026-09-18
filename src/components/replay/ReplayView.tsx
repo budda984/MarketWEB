@@ -17,6 +17,8 @@ import {
   CalendarSearch,
   RotateCcw,
   X,
+  ArrowUpRight,
+  ArrowDownRight,
 } from 'lucide-react';
 import {
   BASE_OPTIONS,
@@ -52,6 +54,26 @@ type Session = {
   base: BaseTf;
   name: string | null;
   bars: Bar[];
+  /** Se la sessione parte da un gap: ampiezza in percentuale */
+  gapPct?: number;
+};
+
+type GapRow = {
+  ticker: string;
+  gap_date: string;
+  direction: 'up' | 'down';
+  gap_pct: number;
+  volume_ratio: number | null;
+  filled: boolean;
+};
+
+/** Giorni coperti da ciascuna risoluzione: oltre, Yahoo non ha i dati */
+const GAP_DAYS: Record<BaseTf, number> = { '1m': 29, '5m': 59, '1h': 729, '1d': 3650 };
+const GAP_PERIOD: Record<BaseTf, string> = {
+  '1m': 'degli ultimi 30 giorni',
+  '5m': 'degli ultimi 60 giorni',
+  '1h': 'degli ultimi 2 anni',
+  '1d': 'presenti in archivio',
 };
 
 type PickField = 'entry' | 'stop' | 'target';
@@ -69,6 +91,12 @@ export default function ReplayView({ watchlistTickers }: { watchlistTickers: str
   const [date, setDate] = useState('');
   const [loading, setLoading] = useState(false);
   const [setupErr, setSetupErr] = useState<string | null>(null);
+  const [setupMode, setSetupMode] = useState<'manual' | 'gaps'>('manual');
+  const [gapMin, setGapMin] = useState('6');
+  const [gapDir, setGapDir] = useState<'up' | 'down' | 'all'>('up');
+  const [gapList, setGapList] = useState<GapRow[]>([]);
+  const [gapLoading, setGapLoading] = useState(false);
+  const [gapErr, setGapErr] = useState<string | null>(null);
 
   // ---- Sessione ------------------------------------------------------------
   const [session, setSession] = useState<Session | null>(null);
@@ -288,15 +316,45 @@ export default function ReplayView({ watchlistTickers }: { watchlistTickers: str
   }, [session, tab, step]);
 
   // ==========================================================================
+  // Elenco dei gap in apertura, limitato al periodo coperto dalla base
+  // ==========================================================================
+  useEffect(() => {
+    if (setupMode !== 'gaps' || session) return;
+    const min = Number(gapMin);
+    if (!Number.isFinite(min) || min <= 0) return;
+    let cancel = false;
+    const id = setTimeout(async () => {
+      setGapLoading(true);
+      setGapErr(null);
+      try {
+        const r = await fetch(`/api/replay/gaps?min=${min}&direction=${gapDir}&days=${GAP_DAYS[base]}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error ?? 'Errore');
+        if (!cancel) setGapList(d.gaps ?? []);
+      } catch (e) {
+        if (!cancel) setGapErr((e as Error).message);
+      } finally {
+        if (!cancel) setGapLoading(false);
+      }
+    }, 300);
+    return () => {
+      cancel = true;
+      clearTimeout(id);
+    };
+  }, [setupMode, gapMin, gapDir, base, session]);
+
+  // ==========================================================================
   // Avvio sessione
   // ==========================================================================
-  async function startSession(random: boolean) {
-    const tk = ticker.trim().toUpperCase();
+  async function startSession(
+    opts: { mode: 'date' | 'random' } | { mode: 'gap'; gap: GapRow }
+  ) {
+    const tk = (opts.mode === 'gap' ? opts.gap.ticker : ticker).trim().toUpperCase();
     if (!tk) {
       setSetupErr('Inserisci un ticker');
       return;
     }
-    if (!random && !date) {
+    if (opts.mode === 'date' && !date) {
       setSetupErr('Scegli una data oppure usa la data casuale');
       return;
     }
@@ -312,7 +370,19 @@ export default function ReplayView({ watchlistTickers }: { watchlistTickers: str
 
       const warm = Math.min(Math.floor(n * 0.25), 2000);
       let c: number;
-      if (random) {
+      if (opts.mode === 'gap') {
+        // Parto dalla prima candela della seduta del gap: il gap si vede,
+        // tutto quello che succede dopo l'apertura resta nascosto
+        const dayStart = Date.parse(`${opts.gap.gap_date}T00:00:00Z`) / 1000;
+        c = bars.findIndex((b) => b.t >= dayStart);
+        if (c < 0 || bars[c].t >= dayStart + 86400) {
+          throw new Error(
+            `Dati ${base} non disponibili per la seduta del ${opts.gap.gap_date}: prova una risoluzione con più storico`
+          );
+        }
+        if (c < 20) throw new Error('Troppo poco storico prima del gap per questa risoluzione');
+        if (c >= n - 1) throw new Error('La seduta del gap è l’ultima disponibile: niente da riprodurre');
+      } else if (opts.mode === 'random') {
         const hi = Math.floor(n * 0.9);
         c = warm + Math.floor(Math.random() * Math.max(1, hi - warm));
       } else {
@@ -337,6 +407,7 @@ export default function ReplayView({ watchlistTickers }: { watchlistTickers: str
         base,
         name: d.name ?? null,
         bars,
+        gapPct: opts.mode === 'gap' ? Number(opts.gap.gap_pct) : undefined,
       });
       setTf(DEFAULT_TF[base]);
       setCursor(c);
@@ -494,6 +565,16 @@ export default function ReplayView({ watchlistTickers }: { watchlistTickers: str
             </p>
           </div>
 
+          <div className="inline-flex rounded-md border border-brand-border overflow-hidden text-sm">
+            <TabBtn active={setupMode === 'manual'} onClick={() => setSetupMode('manual')}>
+              Scelgo io
+            </TabBtn>
+            <TabBtn active={setupMode === 'gaps'} onClick={() => setSetupMode('gaps')}>
+              Gap in apertura
+            </TabBtn>
+          </div>
+
+          {setupMode === 'manual' && (
           <label className="block">
             <span className="text-xs text-brand-muted">Ticker</span>
             <input
@@ -510,6 +591,7 @@ export default function ReplayView({ watchlistTickers }: { watchlistTickers: str
               ))}
             </datalist>
           </label>
+          )}
 
           <div>
             <span className="text-xs text-brand-muted">Dati di partenza</span>
@@ -534,26 +616,112 @@ export default function ReplayView({ watchlistTickers }: { watchlistTickers: str
             </p>
           </div>
 
-          <label className="block">
-            <span className="text-xs text-brand-muted">Data di partenza</span>
-            <input
-              type="date"
-              className="input w-full mt-1"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
-          </label>
+          {setupMode === 'manual' && (
+            <>
+              <label className="block">
+                <span className="text-xs text-brand-muted">Data di partenza</span>
+                <input
+                  type="date"
+                  className="input w-full mt-1"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                />
+              </label>
 
-          <div className="flex flex-wrap gap-2">
-            <button onClick={() => startSession(false)} disabled={loading} className="btn-primary disabled:opacity-50">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarSearch className="w-4 h-4" />}
-              Inizia dalla data
-            </button>
-            <button onClick={() => startSession(true)} disabled={loading} className="btn-ghost disabled:opacity-50">
-              <Shuffle className="w-4 h-4" />
-              Data casuale
-            </button>
-          </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => startSession({ mode: 'date' })} disabled={loading} className="btn-primary disabled:opacity-50">
+                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarSearch className="w-4 h-4" />}
+                  Inizia dalla data
+                </button>
+                <button onClick={() => startSession({ mode: 'random' })} disabled={loading} className="btn-ghost disabled:opacity-50">
+                  <Shuffle className="w-4 h-4" />
+                  Data casuale
+                </button>
+              </div>
+            </>
+          )}
+
+          {setupMode === 'gaps' && (
+            <div className="space-y-3">
+              <div className="flex items-end gap-2 flex-wrap">
+                <label className="block">
+                  <span className="text-xs text-brand-muted">Gap minimo %</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={1}
+                    step={0.5}
+                    className="input w-24 mt-1 font-mono"
+                    value={gapMin}
+                    onChange={(e) => setGapMin(e.target.value)}
+                  />
+                </label>
+                <div className="inline-flex rounded-md border border-brand-border overflow-hidden text-sm">
+                  <TabBtn active={gapDir === 'up'} onClick={() => setGapDir('up')}>Rialzo</TabBtn>
+                  <TabBtn active={gapDir === 'down'} onClick={() => setGapDir('down')}>Ribasso</TabBtn>
+                  <TabBtn active={gapDir === 'all'} onClick={() => setGapDir('all')}>Entrambi</TabBtn>
+                </div>
+              </div>
+              <p className="text-xs text-brand-muted">
+                Gap sulla chiusura precedente, senza sovrapposizione col giorno prima. Titoli di S&amp;P 500 e NASDAQ,
+                sedute {GAP_PERIOD[base]}. La sessione parte dalla prima candela
+                del giorno del gap.
+              </p>
+
+              {gapLoading && (
+                <p className="text-sm text-brand-muted flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Cerco i gap…
+                </p>
+              )}
+              {gapErr && <p className="text-sm text-brand-down">{gapErr}</p>}
+              {!gapLoading && !gapErr && gapList.length === 0 && (
+                <p className="text-sm text-brand-muted">
+                  Nessun gap sopra il {gapMin}% in questo periodo. Abbassa la soglia o scegli dati con più storico.
+                </p>
+              )}
+
+              {gapList.length > 0 && (
+                <>
+                  <button
+                    onClick={() => startSession({ mode: 'gap', gap: gapList[Math.floor(Math.random() * gapList.length)] })}
+                    disabled={loading}
+                    className="btn-primary disabled:opacity-50"
+                  >
+                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shuffle className="w-4 h-4" />}
+                    Gap casuale tra {gapList.length}
+                  </button>
+                  <div className="max-h-80 overflow-y-auto border border-brand-border rounded-md divide-y divide-brand-border">
+                    {gapList.map((g) => (
+                      <button
+                        key={`${g.ticker}-${g.gap_date}`}
+                        onClick={() => startSession({ mode: 'gap', gap: g })}
+                        disabled={loading}
+                        className="w-full flex items-center gap-3 px-3 py-2 text-sm hover:bg-brand-panel disabled:opacity-50 text-left"
+                      >
+                        {g.gap_pct >= 0 ? (
+                          <ArrowUpRight className="w-4 h-4 text-brand-up flex-shrink-0" />
+                        ) : (
+                          <ArrowDownRight className="w-4 h-4 text-brand-down flex-shrink-0" />
+                        )}
+                        <span className="font-mono font-semibold w-16">{g.ticker}</span>
+                        <span className="text-brand-muted text-xs">{fmtIsoDate(g.gap_date)}</span>
+                        <span className="flex-1" />
+                        {g.volume_ratio != null && (
+                          <span className="text-xs text-brand-muted font-mono" title="Volume rispetto alla media a 20 sedute">
+                            vol {Number(g.volume_ratio).toFixed(1)}x
+                          </span>
+                        )}
+                        <span className={`font-mono ${g.gap_pct >= 0 ? 'text-brand-up' : 'text-brand-down'}`}>
+                          {g.gap_pct >= 0 ? '+' : ''}
+                          {Number(g.gap_pct).toFixed(1)}%
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           {setupErr && <p className="text-sm text-brand-down">{setupErr}</p>}
         </div>
       )}
@@ -573,6 +741,12 @@ export default function ReplayView({ watchlistTickers }: { watchlistTickers: str
                 {fmtDateTime(lastBar.t, isIntraday(tf) || session.base !== '1d')} {fmtPx(lastBar.c)}
               </div>
             </div>
+            {session.gapPct != null && (
+              <span className={`tag ${session.gapPct >= 0 ? 'bg-brand-up/15 text-brand-up' : 'bg-brand-down/15 text-brand-down'}`}>
+                Gap {session.gapPct >= 0 ? '+' : ''}
+                {session.gapPct.toFixed(1)}%
+              </span>
+            )}
             <div className="flex-1" />
             {sessionClosed > 0 && (
               <span className={`tag ${sessionR >= 0 ? 'bg-brand-up/15 text-brand-up' : 'bg-brand-down/15 text-brand-down'}`}>
@@ -950,6 +1124,11 @@ function fmtDateTime(t: number, withTime: boolean): string {
   const date = `${DAYS[d.getUTCDay()]} ${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
   if (!withTime) return date;
   return `${date} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+function fmtIsoDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
 }
 
 function fmtDate(t: number): string {
