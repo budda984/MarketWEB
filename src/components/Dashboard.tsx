@@ -25,6 +25,7 @@ import {
   CalendarDays,
   ArrowLeft,
   Shapes,
+  History,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
@@ -46,6 +47,7 @@ import GapsView from './GapsView';
 import ValuationsView from './ValuationsView';
 import EarningsView from './EarningsView';
 import FormationsView from './FormationsView';
+import ReplayView from './replay/ReplayView';
 
 type View =
   | 'chart'
@@ -63,7 +65,8 @@ type View =
   | 'gaps'
   | 'valuations'
   | 'formations'
-  | 'earnings';
+  | 'earnings'
+  | 'replay';
 
 const VIEW_LABELS: Record<View, string> = {
   chart: 'Chart',
@@ -82,6 +85,7 @@ const VIEW_LABELS: Record<View, string> = {
   valuations: 'Valutazioni',
   earnings: 'Trimestrali',
   formations: 'Figure',
+  replay: 'Replay',
 };
 
 type Props = {
@@ -355,6 +359,12 @@ export default function Dashboard({
             label="Indici"
           />
           <NavButton
+            active={view === 'replay'}
+            onClick={() => setView('replay')}
+            icon={<History className="w-4 h-4" />}
+            label="Replay"
+          />
+          <NavButton
             active={view === 'backtest'}
             onClick={() => setView('backtest')}
             icon={<Zap className="w-4 h-4" />}
@@ -595,6 +605,12 @@ export default function Dashboard({
                   Figure
                 </span>
               )}
+              {view === 'replay' && (
+                <span className="font-semibold flex items-center gap-1.5">
+                  <History className="w-4 h-4 flex-shrink-0" />
+                  Replay
+                </span>
+              )}
               {view === 'settings' && (
                 <span className="font-semibold flex items-center gap-1.5">
                   <Settings className="w-4 h-4 flex-shrink-0" />
@@ -656,6 +672,11 @@ export default function Dashboard({
           {view === 'movers' && <MoversView onOpenTicker={onOpenTicker} />}
           {view === 'indices' && <IndicesView onOpenTicker={onOpenTicker} />}
           {view === 'settings' && <SettingsView />}
+          {view === 'replay' && (
+            <ReplayView
+              watchlistTickers={Array.from(new Set(watchlists.flatMap((w) => w.tickers))).sort()}
+            />
+          )}
         </div>
       </main>
     </div>
