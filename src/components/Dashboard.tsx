@@ -16,6 +16,7 @@ import {
   Bell,
   Radar,
   Briefcase,
+  BarChart3,
   Sunrise,
   CalendarClock,
   MessagesSquare,
@@ -40,6 +41,7 @@ import IndicesView from './IndicesView';
 import ScreenerView from './ScreenerView';
 import InsiderView from './InsiderView';
 import MoversView from './MoversView';
+import VolumeView from './VolumeView';
 import WeeklyTrendView from './WeeklyTrendView';
 import SocialView from './SocialView';
 import OpportunitiesView from './OpportunitiesView';
@@ -59,6 +61,7 @@ type View =
   | 'screener'
   | 'insider'
   | 'movers'
+  | 'volume'
   | 'weekly'
   | 'social'
   | 'radar'
@@ -78,6 +81,7 @@ const VIEW_LABELS: Record<View, string> = {
   screener: 'Screener',
   insider: 'Insider',
   movers: 'Top mover',
+  volume: 'Volumi',
   weekly: 'Trend settimanale',
   social: 'Social',
   radar: 'Radar',
@@ -333,6 +337,12 @@ export default function Dashboard({
             onClick={() => setView('movers')}
             icon={<Sunrise className="w-4 h-4" />}
             label="Top mover"
+          />
+          <NavButton
+            active={view === 'volume'}
+            onClick={() => setView('volume')}
+            icon={<BarChart3 className="w-4 h-4" />}
+            label="Volumi"
           />
           <NavButton
             active={view === 'valuations'}
@@ -670,6 +680,7 @@ export default function Dashboard({
           {view === 'formations' && <FormationsView onOpenTicker={onOpenTicker} />}
           {view === 'social' && <SocialView onOpenTicker={onOpenTicker} />}
           {view === 'movers' && <MoversView onOpenTicker={onOpenTicker} />}
+          {view === 'volume' && <VolumeView onOpenTicker={onOpenTicker} />}
           {view === 'indices' && <IndicesView onOpenTicker={onOpenTicker} />}
           {view === 'settings' && <SettingsView />}
           {view === 'replay' && (
