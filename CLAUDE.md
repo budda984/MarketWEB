@@ -34,9 +34,6 @@ il build senza chiavi vere:
 NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=dummy npm run build
 ```
 
-Lo script `npm run scan:local` è rotto: punta a `scripts/scan-local.ts`, che
-non esiste più. Non usarlo.
-
 ## Come lavorare con Andrea
 
 - **Lingua**: commenti nel codice, messaggi di commit, testi dell'interfaccia
@@ -47,7 +44,7 @@ non esiste più. Non usarlo.
 - **Verifica prima del push**: `npx tsc --noEmit` e `npm run build` puliti.
 - **Migration**: le esegue Andrea a mano nell'editor SQL di Supabase. Ogni
   modifica allo schema va in un nuovo file `supabase/migrations/NNN_nome.sql`
-  (numerazione progressiva, ultima: `019`) e il testo SQL va riportato anche
+  (numerazione progressiva, ultima: `020`) e il testo SQL va riportato anche
   nella risposta. Mai dare per scontato che una migration sia stata eseguita:
   il codice deve dare un errore leggibile se manca una colonna o una tabella
   (vedi `valuationDbErrorMessage` in `src/lib/valuation-row.ts`).
@@ -163,19 +160,11 @@ non esiste più. Non usarlo.
 
 ## Problemi noti, non ancora sistemati
 
-- `src/lib/yahoo-earnings.ts` non è importato da nessuno: duplicato di
-  `src/lib/earnings-calendar.ts`.
-- `src/app/api/cron/scan/route.ts` dichiara gli array delle figure
-  (`allHs`, `allFlag`, `allWedge`, `allCup`, `allDouble`) ma non li riempie
-  più: residuo del radar dei pattern rimosso. L'intestazione di
-  `src/lib/patterns.ts` parla ancora di "Fase 1".
-- Il controllo di `CRON_SECRET` non è uniforme: `/api/cron/scan` rifiuta se la
-  variabile manca, gli altri cron (`if (secret && …)`) restano aperti.
-- `user_settings.default_markets` in `supabase/schema.sql` ha ancora `'Europa'`
-  nel valore predefinito.
-- L'errore `e is not iterable` è stato visto su una ventina di titoli USA
-  grandi (V, CB, SPGI…) nel motore delle valutazioni, probabilmente nel
-  ramo SEC. Ora quei titoli vengono marcati `non_valutabile` con il motivo e
-  non bloccano più la coda, ma la causa non è stata trovata.
+- Next.js è fermo alla linea 14.2 (ultima: 14.2.35), che non riceve più
+  correzioni di sicurezza. Le vulnerabilità aperte riguardano soprattutto
+  funzioni non usate (next/image, server actions, rewrites, i18n); per
+  chiuderle tutte serve il passaggio a Next 15.5 con React 19.
+- `/api/scan` accetta ancora `includePatterns: true` e calcola le vecchie
+  figure del radar, ma nessuna vista lo chiede più.
 
 Prima di sistemarli, chiedere ad Andrea: alcuni possono essere voluti.

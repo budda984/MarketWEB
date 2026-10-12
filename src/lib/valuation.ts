@@ -53,9 +53,13 @@ async function fetchConcept(
     });
     if (!res.ok) return null;
     const json = (await res.json()) as {
-      units?: Record<string, ConceptFact[]>;
+      units?: Record<string, unknown>;
     };
-    return json?.units?.[unit] ?? null;
+    // Per alcune societa' (V, CB, SPGI…) la SEC risponde con l'unita'
+    // presente ma vuota, `"USD": {}`, invece di una lista: senza questo
+    // controllo il ciclo su quei dati fallisce con "e is not iterable"
+    const facts = json?.units?.[unit];
+    return Array.isArray(facts) ? (facts as ConceptFact[]) : null;
   } catch {
     return null;
   } finally {
@@ -172,7 +176,13 @@ export async function fetchFundamentals(
   );
   await sleep(SEC_DELAY_MS);
 
-  const niFacts = await fetchConcept(cik, 'NetIncomeLoss', 'USD');
+  // ProfitLoss include le quote di terzi: approssimazione accettabile
+  // quando NetIncomeLoss manca o e' vuoto
+  const niFacts = await fetchFirstAvailable(
+    cik,
+    ['NetIncomeLoss', 'ProfitLoss'],
+    'USD'
+  );
 
   const eps = epsFacts ? quarterlySeries(epsFacts) : [];
   const rev = revFacts ? quarterlySeries(revFacts) : [];

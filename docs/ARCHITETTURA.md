@@ -106,7 +106,7 @@ nell'editor SQL di Supabase.
 | `earnings_calendar` | Date annunciate delle trimestrali | cron/earnings | 016 |
 | `replay_trades` | Trade chiusi nel Replay | Replay | 019 |
 
-Ultima migration: `019_replay_trades.sql`. La prossima è la `020`.
+Ultima migration: `020_default_markets_italia.sql`. La prossima è la `021`.
 
 ## L'universo dei titoli
 
@@ -493,7 +493,7 @@ src/
   types/db.ts       tipi delle righe del database
 supabase/
   schema.sql        schema di base
-  migrations/       001–019, da eseguire in ordine
+  migrations/       001–020, da eseguire in ordine
 docs/
   ARCHITETTURA.md   questo documento
 CLAUDE.md           istruzioni per Claude Code

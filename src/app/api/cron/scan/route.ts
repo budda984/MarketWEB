@@ -2,18 +2,6 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { yahooDownloadMany, type OHLCV } from '@/lib/yahoo';
 import { scanTickers } from '@/lib/signals';
-import {
-  detectHeadAndShoulders,
-  detectFlags,
-  detectWedges,
-  detectCupHandle,
-  detectDoubleTopBottom,
-  type HSPattern,
-  type FlagPattern,
-  type WedgePattern,
-  type CupHandlePattern,
-  type DoublePattern,
-} from '@/lib/patterns';
 import { MARKETS, type MarketKey } from '@/lib/tickers';
 import { evaluateAlerts } from '@/lib/alerts';
 import {
@@ -53,11 +41,6 @@ export async function GET(req: Request) {
 
   let totalScanned = 0;
   let totalSignals = 0;
-  let totalHs = 0;
-  let totalFlag = 0;
-  let totalWedge = 0;
-  let totalCup = 0;
-  let totalDouble = 0;
   let errors = 0;
 
   const allHma: Array<{
@@ -74,12 +57,6 @@ export async function GET(req: Request) {
     timestamp: number;
     market: string;
   }> = [];
-
-  const allHs: Array<{ ticker: string; pattern: HSPattern; market: string; timestamp: number; details: string }> = [];
-  const allFlag: Array<{ ticker: string; pattern: FlagPattern; market: string; timestamp: number; details: string }> = [];
-  const allWedge: Array<{ ticker: string; pattern: WedgePattern; market: string; timestamp: number; details: string }> = [];
-  const allCup: Array<{ ticker: string; pattern: CupHandlePattern; market: string; timestamp: number; details: string }> = [];
-  const allDouble: Array<{ ticker: string; pattern: DoublePattern; market: string; timestamp: number; details: string }> = [];
 
   // Prezzi correnti per ogni ticker (serve per gli alert)
   const currentPrices = new Map<string, number>();
@@ -98,7 +75,7 @@ export async function GET(req: Request) {
 
     const tickers = MARKETS[market];
     try {
-      // 6 mesi di dati per pattern più lunghi (Cup può arrivare a 130 candele + 25 handle)
+      // 6 mesi di candele: bastano per HMA50 e per le finestre delle regole automatiche
       const candles = await yahooDownloadMany(tickers, '6mo', '1d', 15);
       for (const [tk, arr] of Object.entries(candles)) allCandles.set(tk, arr);
       const found = await scanTickers(candles, 1);
@@ -124,10 +101,8 @@ export async function GET(req: Request) {
 
       for (const [ticker, candlesArr] of Object.entries(candles)) {
         if (candlesArr.length < 60) continue;
-        const ts = candlesArr[candlesArr.length - 1].t;
         // Salvo il prezzo corrente per la valutazione alert
         currentPrices.set(ticker, candlesArr[candlesArr.length - 1].c);
-
       }
 
       marketsCompleted.push(market);
@@ -158,82 +133,6 @@ export async function GET(req: Request) {
       market: s.market,
     });
   }
-  for (const p of allHs) {
-    rows.push({
-      user_id: null,
-      ticker: p.ticker,
-      strategy: p.pattern.type === 'HS' ? 'PATTERN_HS' : 'PATTERN_IHS',
-      strength: p.pattern.strength,
-      price: p.pattern.lastPrice,
-      details: p.details,
-      signal_at: new Date(p.timestamp * 1000).toISOString(),
-      status: 'ACTIVE',
-      entry_price: p.pattern.lastPrice,
-      market: p.market,
-      pattern_data: p.pattern,
-    });
-  }
-  for (const p of allFlag) {
-    rows.push({
-      user_id: null,
-      ticker: p.ticker,
-      strategy: p.pattern.type === 'BULL_FLAG' ? 'PATTERN_BULL_FLAG' : 'PATTERN_BEAR_FLAG',
-      strength: p.pattern.strength,
-      price: p.pattern.lastPrice,
-      details: p.details,
-      signal_at: new Date(p.timestamp * 1000).toISOString(),
-      status: 'ACTIVE',
-      entry_price: p.pattern.lastPrice,
-      market: p.market,
-      pattern_data: p.pattern,
-    });
-  }
-  for (const p of allWedge) {
-    rows.push({
-      user_id: null,
-      ticker: p.ticker,
-      strategy: p.pattern.type === 'RISING_WEDGE' ? 'PATTERN_RISING_WEDGE' : 'PATTERN_FALLING_WEDGE',
-      strength: p.pattern.strength,
-      price: p.pattern.lastPrice,
-      details: p.details,
-      signal_at: new Date(p.timestamp * 1000).toISOString(),
-      status: 'ACTIVE',
-      entry_price: p.pattern.lastPrice,
-      market: p.market,
-      pattern_data: p.pattern,
-    });
-  }
-  for (const p of allCup) {
-    rows.push({
-      user_id: null,
-      ticker: p.ticker,
-      strategy: 'PATTERN_CUP_HANDLE',
-      strength: p.pattern.strength,
-      price: p.pattern.lastPrice,
-      details: p.details,
-      signal_at: new Date(p.timestamp * 1000).toISOString(),
-      status: 'ACTIVE',
-      entry_price: p.pattern.lastPrice,
-      market: p.market,
-      pattern_data: p.pattern,
-    });
-  }
-  for (const p of allDouble) {
-    rows.push({
-      user_id: null,
-      ticker: p.ticker,
-      strategy: `PATTERN_${p.pattern.type}`,
-      strength: p.pattern.strength,
-      price: p.pattern.lastPrice,
-      details: p.details,
-      signal_at: new Date(p.timestamp * 1000).toISOString(),
-      status: 'ACTIVE',
-      entry_price: p.pattern.lastPrice,
-      market: p.market,
-      pattern_data: p.pattern,
-    });
-  }
-
   if (rows.length > 0) {
     // Dedup del batch: Postgres rifiuta se lo stesso UPSERT tocca due
     // volte la stessa chiave (user_id, ticker, strategy). Può succedere
@@ -387,10 +286,9 @@ export async function GET(req: Request) {
 
   // Telegram
   let telegramSent = 0;
-  const totalPatterns = allHs.length + allFlag.length + allWedge.length + allCup.length + allDouble.length;
   const hasTriggeredAlerts = alertsByUser.size > 0;
   const hasAutoHits = autoLinesByUser.size > 0;
-  if (allHma.length > 0 || totalPatterns > 0 || hasTriggeredAlerts || hasAutoHits) {
+  if (allHma.length > 0 || hasTriggeredAlerts || hasAutoHits) {
     const { data: userSettings } = await admin
       .from('user_settings')
       .select('user_id, telegram_bot_token, telegram_chat_id, min_strength')
@@ -403,20 +301,10 @@ export async function GET(req: Request) {
         // uno zero farebbe finire nelle notifiche roba che segnale non e'
         const minStr = Math.max(1, s.min_strength ?? 1);
         const hma = allHma.filter((x) => x.strength >= minStr);
-        const hs = allHs.filter((x) => x.pattern.strength >= minStr);
-        const fl = allFlag.filter((x) => x.pattern.strength >= minStr);
-        const we = allWedge.filter((x) => x.pattern.strength >= minStr);
-        const cu = allCup.filter((x) => x.pattern.strength >= minStr);
-        const db = allDouble.filter((x) => x.pattern.strength >= minStr);
         const triggeredForUser = alertsByUser.get(s.user_id) ?? [];
 
         if (
           hma.length === 0 &&
-          hs.length === 0 &&
-          fl.length === 0 &&
-          we.length === 0 &&
-          cu.length === 0 &&
-          db.length === 0 &&
           triggeredForUser.length === 0 &&
           (autoLinesByUser.get(s.user_id) ?? []).length === 0
         ) {
@@ -453,7 +341,7 @@ export async function GET(req: Request) {
       .update({
         finished_at: new Date().toISOString(),
         tickers_scanned: totalScanned,
-        signals_found: totalSignals + totalPatterns,
+        signals_found: totalSignals,
         errors,
       })
       .eq('id', run.id);
@@ -464,12 +352,6 @@ export async function GET(req: Request) {
     elapsedMs: Date.now() - t0,
     scanned: totalScanned,
     hmaSignals: totalSignals,
-    hsPatterns: totalHs,
-    flagPatterns: totalFlag,
-    wedgePatterns: totalWedge,
-    cupPatterns: totalCup,
-    doublePatterns: totalDouble,
-    patterns: totalPatterns,
     autoRuleHits: autoNewHits,
     autoRulesSkippedLookback: autoSkippedLookback,
     alertsTriggered: Array.from(alertsByUser.values()).reduce(
@@ -481,151 +363,6 @@ export async function GET(req: Request) {
     marketsSkipped,
     telegramSent,
   });
-}
-
-function hsDetails(p: HSPattern): string {
-  const name = p.type === 'HS' ? 'Testa e Spalle' : 'Inv. Testa e Spalle';
-  const dir = p.direction === 'down' ? '↓ ribassista' : '↑ rialzista';
-  return `${name} · ${dir} · conf ${(p.confidence * 100).toFixed(0)}% · ${
-    p.breakoutConfirmed ? `breakout ${p.breakoutBarsAgo}d fa` : 'in attesa breakout'
-  }`;
-}
-function flagDetails(p: FlagPattern): string {
-  const name = p.type === 'BULL_FLAG' ? 'Bull Flag' : 'Bear Flag';
-  const dir = p.direction === 'up' ? '↑ rialzista' : '↓ ribassista';
-  return `${name} · ${dir} · pole ${p.poleChangePct >= 0 ? '+' : ''}${p.poleChangePct.toFixed(1)}% · conf ${(p.confidence * 100).toFixed(0)}% · ${
-    p.breakoutConfirmed ? `breakout ${p.breakoutBarsAgo}d fa` : 'in attesa breakout'
-  }`;
-}
-function wedgeDetails(p: WedgePattern): string {
-  const name = p.type === 'RISING_WEDGE' ? 'Rising Wedge' : 'Falling Wedge';
-  const dir = p.direction === 'up' ? '↑ rialzista' : '↓ ribassista';
-  return `${name} · ${dir} · conf ${(p.confidence * 100).toFixed(0)}% · ${
-    p.breakoutConfirmed ? `breakout ${p.breakoutBarsAgo}d fa` : 'in attesa breakout'
-  }`;
-}
-function cupDetails(p: CupHandlePattern): string {
-  return `Cup & Handle · ↑ rialzista · cup ${p.cupDepthPct.toFixed(1)}% · handle ${p.handleDepthPct.toFixed(1)}% · conf ${(p.confidence * 100).toFixed(0)}% · ${
-    p.breakoutConfirmed ? `breakout ${p.breakoutBarsAgo}d fa` : 'in attesa breakout'
-  }`;
-}
-
-function doubleDetails(p: DoublePattern): string {
-  const label = {
-    DOUBLE_TOP: 'Double Top',
-    DOUBLE_BOTTOM: 'Double Bottom',
-    TRIPLE_TOP: 'Triple Top',
-    TRIPLE_BOTTOM: 'Triple Bottom',
-  }[p.type];
-  const dir = p.direction === 'up' ? '↑ rialzista' : '↓ ribassista';
-  const conf = `conf ${(p.confidence * 100).toFixed(0)}%`;
-  const status =
-    p.breakoutConfirmed && p.breakoutBarsAgo != null
-      ? `breakout ${p.breakoutBarsAgo}d fa`
-      : 'in attesa breakout';
-  return `${label} · ${dir} · neck $${p.neckline.toFixed(2)} · ${conf} · ${status}`;
-}
-
-type PatternLine = {
-  ticker: string;
-  icon: string;
-  name: string;
-  price: number;
-  target?: number;
-  level: number;
-  conf: number;
-  strength: number;
-};
-
-function formatPatternDigest(
-  hs: Array<{ ticker: string; pattern: HSPattern }>,
-  flags: Array<{ ticker: string; pattern: FlagPattern }>,
-  wedges: Array<{ ticker: string; pattern: WedgePattern }>,
-  cups: Array<{ ticker: string; pattern: CupHandlePattern }>,
-  doubles: Array<{ ticker: string; pattern: DoublePattern }> = []
-): string {
-  const all: PatternLine[] = [
-    ...hs.map((p) => ({
-      ticker: p.ticker,
-      name: p.pattern.type === 'HS' ? 'H&S' : 'Inv.H&S',
-      icon: p.pattern.type === 'HS' ? '📉' : '📈',
-      price: p.pattern.lastPrice,
-      target: p.pattern.target,
-      level: p.pattern.breakoutLevel,
-      conf: p.pattern.confidence,
-      strength: p.pattern.strength,
-    })),
-    ...flags.map((p) => ({
-      ticker: p.ticker,
-      name: p.pattern.type === 'BULL_FLAG' ? 'Bull Flag' : 'Bear Flag',
-      icon: p.pattern.type === 'BULL_FLAG' ? '🚩' : '🏳',
-      price: p.pattern.lastPrice,
-      target: p.pattern.target,
-      level: p.pattern.breakoutLevel,
-      conf: p.pattern.confidence,
-      strength: p.pattern.strength,
-    })),
-    ...wedges.map((p) => ({
-      ticker: p.ticker,
-      name: p.pattern.type === 'RISING_WEDGE' ? 'Rising Wedge' : 'Falling Wedge',
-      icon: p.pattern.type === 'RISING_WEDGE' ? '🔻' : '🔺',
-      price: p.pattern.lastPrice,
-      target: p.pattern.target,
-      level: p.pattern.breakoutLevel,
-      conf: p.pattern.confidence,
-      strength: p.pattern.strength,
-    })),
-    ...cups.map((p) => ({
-      ticker: p.ticker,
-      name: 'Cup&Handle',
-      icon: '☕',
-      price: p.pattern.lastPrice,
-      target: p.pattern.target,
-      level: p.pattern.breakoutLevel,
-      conf: p.pattern.confidence,
-      strength: p.pattern.strength,
-    })),
-    ...doubles.map((p) => ({
-      ticker: p.ticker,
-      name: {
-        DOUBLE_TOP: 'Double Top',
-        DOUBLE_BOTTOM: 'Double Bottom',
-        TRIPLE_TOP: 'Triple Top',
-        TRIPLE_BOTTOM: 'Triple Bottom',
-      }[p.pattern.type],
-      icon: p.pattern.direction === 'up' ? '⬆️' : '⬇️',
-      price: p.pattern.lastPrice,
-      target: p.pattern.target,
-      level: p.pattern.neckline,
-      conf: p.pattern.confidence,
-      strength: p.pattern.strength,
-    })),
-  ];
-
-  const breakouts = all.filter((p) => p.strength === 3);
-  const forming = all.filter((p) => p.strength === 2);
-
-  const lines: string[] = ['*🎯 Pattern Radar*\n'];
-
-  if (breakouts.length > 0) {
-    lines.push(`🚨 <b>BREAKOUT</b> (${breakouts.length})`);
-    for (const p of breakouts.slice(0, 20)) {
-      const tgt = p.target != null ? ` → $${p.target.toFixed(2)}` : '';
-      lines.push(`  ${p.icon} <code>${p.ticker}</code> ${p.name} @ $${p.price.toFixed(2)}${tgt}`);
-    }
-    lines.push('');
-  }
-
-  if (forming.length > 0) {
-    lines.push(`⏳ <b>In attesa</b> (${forming.length})`);
-    for (const p of forming.slice(0, 15)) {
-      lines.push(
-        `  ${p.icon} <code>${p.ticker}</code> ${p.name} lvl $${p.level.toFixed(2)} (${(p.conf * 100).toFixed(0)}%)`
-      );
-    }
-  }
-
-  return lines.join('\n');
 }
 
 function formatAlertDigest(

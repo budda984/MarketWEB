@@ -1,7 +1,13 @@
 /**
- * Pattern recognition engine — Fase 1: Head & Shoulders (e inverse).
+ * Rilevatori geometrici delle figure: testa e spalle (anche inversa),
+ * bandiere, cunei, cup & handle, doppi e tripli massimi/minimi.
  *
- * Parametri rigorosi (pochi pattern ma di alta qualità):
+ * Dopo la rimozione del radar dei pattern da cron e scan, l'uso
+ * principale di questo modulo è `findPivots`, importato da
+ * `formations.ts`. I rilevatori restano raggiungibili solo da
+ * `/api/scan` con `includePatterns: true`.
+ *
+ * Testa e spalle, parametri rigorosi (pochi pattern ma di alta qualità):
  *  - Pivot: leftBars = rightBars = 5 (massimo/minimo di 2 settimane)
  *  - Spalla: deve essere ≥ 2% sotto la testa
  *  - Simmetria spalle: |LS - RS| / H ≤ 8%

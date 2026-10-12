@@ -137,7 +137,7 @@ create table if not exists public.user_settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
   telegram_bot_token text,
   telegram_chat_id text,
-  default_markets text[] not null default array['S&P 500','NASDAQ','Crypto','Europa']::text[],
+  default_markets text[] not null default array['S&P 500','NASDAQ','Crypto','Italia']::text[],
   hma_period int not null default 50,
   lookback_bars int not null default 10,
   min_strength smallint not null default 1,
