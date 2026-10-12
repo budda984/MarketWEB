@@ -1,213 +1,80 @@
-# Market Monitor Pro — Web Edition
+# Market Monitor Pro — Web
 
-Versione web del Market Monitor Pro desktop. Stesso motore di analisi (Hull MA 50
-+ Heikin Ashi su Yahoo Finance diretto, senza `yfinance`), ora con storico
-persistente e backtesting su **Supabase + Vercel**.
+Applicazione web personale di analisi azionaria: scanner multi-mercato,
+segnali Hull MA 50 + Heikin Ashi, figure grafiche, fair value gap, avvisi
+Telegram, insider, valutazioni dai bilanci, volumi, replay per allenamento.
 
-## Caratteristiche
+In produzione su https://market-web-iota.vercel.app, con deploy automatico
+da `main`.
 
-- **Scanner automatico** — Vercel Cron invoca `/api/cron/scan` alle 18:00 e 00:00
-  (UTC) ogni giorno. Scansione di tutti i mercati definiti in `src/lib/tickers.ts`.
-- **Storico segnali persistente** — ogni segnale viene salvato in Supabase.
-  Puoi seguirne l'evoluzione (TP hit, SL hit, time stop, chiuso).
-- **Backtesting** — simulazione storica con SL/TP/time-stop personalizzabili,
-  equity curve, distribuzione P&L, trade log, salvataggio scenari.
-- **Grafici** — tre pannelli separati come nella versione desktop:
-  candlestick + Hull MA 50, Heikin Ashi, volume.
-- **Auth via magic link** — Supabase Auth, nessuna password.
-- **Watchlist persistenti** — CRUD completo, salvataggio su DB.
+- **Come funziona**, sezione per sezione: [`docs/ARCHITETTURA.md`](docs/ARCHITETTURA.md)
+- **Regole di lavoro e vincoli tecnici** (per Claude Code e per chiunque
+  tocchi il codice): [`CLAUDE.md`](CLAUDE.md)
 
 ## Stack
 
-- **Next.js 14** (App Router, Server Components, Route Handlers)
-- **Supabase** (Postgres, Auth, RLS)
-- **Tailwind CSS** (tema dark stile Spotify)
-- **Recharts** + SVG custom per i grafici
-- **Yahoo Finance API** diretta (TypeScript porta di `yahoo_download`)
-- **Vercel Cron** per lo scheduler
+Next.js 14 (App Router) · TypeScript · Supabase (Postgres, Auth, RLS,
+Realtime) · Tailwind · lightweight-charts · Vercel (piano Hobby) · dati da
+Yahoo Finance, SEC EDGAR e ApeWisdom con `fetch` diretto, senza librerie.
 
----
+## Avvio in locale (macOS)
 
-## Quick start
-
-### 1. Clone e install
+Serve Node.js 20 o superiore.
 
 ```bash
-git clone <repo>
-cd market-monitor-web
+git clone https://github.com/budda984/MarketWEB.git
+cd MarketWEB
 npm install
+cp .env.example .env.local    # poi compila le chiavi, vedi sotto
+npm run dev                   # http://localhost:3000
 ```
 
-### 2. Crea il progetto Supabase
+Le chiavi in `.env.local` sono le stesse impostate su Vercel
+(Project → Settings → Environment Variables):
 
-- Vai su [supabase.com](https://supabase.com), crea un nuovo progetto
-- Apri **SQL Editor** e incolla tutto il contenuto di `supabase/schema.sql`,
-  poi esegui. Crea tutte le tabelle, RLS, trigger e function
-  `get_signal_stats`
-- In **Authentication → Providers** assicurati che **Email** sia abilitato
-- In **Authentication → URL Configuration** aggiungi il tuo URL locale
-  (`http://localhost:3000`) e quello di produzione Vercel come redirect URLs
+| Variabile | Dove si trova |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | idem, chiave "anon public" |
+| `SUPABASE_SERVICE_ROLE_KEY` | idem, chiave "service_role". Solo lato server, mai nel browser |
+| `CRON_SECRET` | stringa casuale lunga, uguale a quella su Vercel |
 
-### 3. Configura le env
+Telegram non si configura qui: token del bot e chat id si inseriscono dalla
+sezione Settings dell'app e vengono salvati per utente nel database.
+
+Per accedere in locale, in Supabase → Authentication → URL Configuration
+deve esserci anche `http://localhost:3000` tra gli indirizzi di
+reindirizzamento.
+
+## Lavorare con Claude Code
+
+Dalla cartella del progetto:
 
 ```bash
-cp .env.example .env.local
+claude
 ```
 
-Compila `.env.local` con:
+Claude Code legge da solo `CLAUDE.md` all'avvio: lì ci sono le regole
+(italiano, push diretto su `main`, verifica con `tsc` e `build`, migration da
+eseguire a mano), i vincoli tecnici e le decisioni già prese.
 
-- `NEXT_PUBLIC_SUPABASE_URL` — da Supabase → Settings → API
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — idem, "anon public"
-- `SUPABASE_SERVICE_ROLE_KEY` — idem, "service_role" (⚠️ solo server-side)
-- `CRON_SECRET` — stringa random lunga che proteggerà il cron endpoint
-
-Telegram è opzionale e non viene usato dal cron in questa versione (può
-essere aggiunto in una iterazione successiva).
-
-### 4. Avvia in locale
+Prima di ogni push:
 
 ```bash
-npm run dev
+npx tsc --noEmit
+npm run build
 ```
 
-Apri [http://localhost:3000](http://localhost:3000). Ti verrà chiesto di
-autenticarti via magic link.
+## Database
 
-### 5. Primo test manuale
+Su un progetto Supabase nuovo: eseguire `supabase/schema.sql`, poi tutte le
+migration di `supabase/migrations/` in ordine numerico, dall'editor SQL.
+Sul progetto esistente le migration sono già state applicate fino alla
+`019`; le nuove si eseguono una alla volta, a mano.
 
-Dopo login:
+## Pianificazione
 
-- Seleziona i mercati dalla sidebar
-- Clicca **Scansiona ora**
-- I segnali compariranno nella tab **Segnali**
-- Clicca un segnale per aprire il suo **Chart** (candlestick + HMA + HA)
-- Apri la tab **Backtest** per simulare la strategia sullo storico
-
----
-
-## Deploy su Vercel
-
-### 1. Push del repo su GitHub
-
-### 2. Importa su Vercel
-
-- Vai su [vercel.com/new](https://vercel.com/new)
-- Importa il repo
-- Framework preset: **Next.js** (auto-detected)
-
-### 3. Env vars
-
-In Vercel → Project → Settings → Environment Variables, aggiungi **tutte** le
-stesse variabili di `.env.local`. Applica a Production + Preview.
-
-### 4. Redeploy
-
-Dopo aver aggiunto le env, triggera un redeploy (Deployments → ... → Redeploy).
-
-### 5. Cron automatico
-
-`vercel.json` contiene già lo schedule:
-
-```json
-{
-  "crons": [
-    { "path": "/api/cron/scan", "schedule": "0 18 * * *" },
-    { "path": "/api/cron/scan", "schedule": "0 0 * * *" }
-  ]
-}
-```
-
-Vercel Cron chiamerà automaticamente l'endpoint con header
-`Authorization: Bearer $CRON_SECRET`. I cron sono disponibili solo sul **piano
-Hobby (1 cron/giorno) o Pro**. Con il piano Hobby dovrai scegliere un solo
-orario.
-
-> **Nota sui fusi orari**: Vercel Cron usa UTC. Se vuoi scansioni alle 18:00
-> e 00:00 ora italiana (CET), usa `0 17 * * *` e `0 23 * * *` (sottrai 1h
-> in inverno, 2h in estate — o metti solo il crono invernale e accetta uno
-> slittamento di un'ora d'estate).
-
----
-
-## Struttura del progetto
-
-```
-market-monitor-web/
-├── supabase/
-│   └── schema.sql              ← eseguire nel SQL Editor
-├── src/
-│   ├── app/
-│   │   ├── api/
-│   │   │   ├── scan/           ← scansione manuale
-│   │   │   ├── cron/scan/      ← scheduler Vercel
-│   │   │   ├── signals/        ← CRUD segnali
-│   │   │   ├── backtest/       ← esegui/salva backtest
-│   │   │   ├── watchlists/     ← CRUD watchlist
-│   │   │   └── quote/[ticker]/ ← quote + candele
-│   │   ├── auth/callback/      ← callback magic link
-│   │   ├── dashboard/          ← pagina principale (auth-gated)
-│   │   ├── login/              ← magic link login
-│   │   ├── page.tsx            ← redirect
-│   │   ├── layout.tsx
-│   │   └── globals.css
-│   ├── components/
-│   │   ├── Dashboard.tsx       ← sidebar + routing viste
-│   │   ├── ChartView.tsx       ← 3 pannelli grafico
-│   │   ├── SignalsView.tsx     ← lista segnali filtrabile
-│   │   └── BacktestView.tsx    ← form + equity + trade log
-│   ├── lib/
-│   │   ├── yahoo.ts            ← porta TS di yahoo_download
-│   │   ├── indicators.ts       ← WMA, HMA, Heikin Ashi
-│   │   ├── signals.ts          ← engine detection HMA+HA
-│   │   ├── backtest.ts         ← simulator SL/TP/time-stop
-│   │   ├── tickers.ts          ← liste mercati
-│   │   └── supabase/
-│   │       ├── client.ts       ← browser
-│   │       ├── server.ts       ← SSR / API routes
-│   │       └── admin.ts        ← service-role (cron)
-│   ├── types/db.ts
-│   └── middleware.ts           ← refresh sessione + redirect auth
-├── vercel.json                 ← cron schedule
-├── next.config.js
-├── tailwind.config.ts
-├── tsconfig.json
-└── package.json
-```
-
----
-
-## Strategia (invariata dal desktop)
-
-**Segnale**: incrocio al rialzo tra prezzo e Hull MA 50, confermato da una
-candela Heikin Ashi verde senza wick inferiore.
-
-**Forza**:
-- **3 (forte)** — incrocio nelle ultime 1-2 candele + HA bullish pulita
-- **2 (medio)** — incrocio recente (3-5 candele) con HA bullish
-- **1 (debole)** — prezzo sopra HMA con HA bullish, incrocio più vecchio
-
-**Backtest**: entry su close della candela di segnale (strength ≥ 2),
-exit al primo di: stop loss (−5% default), take profit (+10% default), time
-stop (20 giorni default). Priorità SL > TP se entrambi toccati nella stessa
-candela.
-
----
-
-## Espansioni suggerite
-
-- **Alert monitoring**: aggiungi un secondo cron che controlla gli `alerts`
-  attivi ogni 5 minuti.
-- **Portfolio tracking**: tabella `positions` che si aggiorna quando lo scanner
-  detecta un TP/SL hit.
-- **Più indicatori**: RSI, MACD, volumi anomali.
-
----
-
-## Costi stimati (piano Hobby)
-
-- **Supabase Free**: 500 MB DB + 50k MAU → ok per uso personale
-- **Vercel Hobby**: 1 cron al giorno gratuito; per 2 cron serve Pro ($20/mese)
-- **Dominio**: opzionale
-
-Per uso personale strettamente, il piano Hobby + Supabase Free costa **€0**
-se ti accontenti di un unico orario di scan al giorno.
+I cron giornalieri sono in `vercel.json` (il piano Hobby ne consente uno al
+giorno per voce). Il motore delle valutazioni gira anche ogni 5 minuti
+tramite un job `pg_cron` su Supabase, configurato fuori dal repository:
+dettagli in `CLAUDE.md`.
